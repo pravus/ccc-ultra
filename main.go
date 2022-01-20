@@ -43,6 +43,51 @@ var htmlIndex = template.Must(template.New(`index`).Parse(strings.TrimSpace(`
 </html>
 `)))
 
+var mimeTypes = map[string]string {
+	`7z`:    `application/x-7z-compressed`,
+	`aac`:   `audio/aac`,
+	`avi`:   `video/x-msvideo`,
+	`bin`:   `application/octet-stream`,
+	`bmp`:   `image/bmp`,
+	`bz`:    `application/x-bzip`,
+	`bz2`:   `application/x-bzip2`,
+	`css`:   `text/css`,
+	`csv`:   `text/csv`,
+	`flac`:  `audio/flac`,
+	`gif`:   `image/gif`,
+	`gz`:    `application/gzip`,
+	`htm`:   `text/html`,
+	`html`:  `text/html`,
+	`jpeg`:  `image/jpeg`,
+	`jpg`:   `image/jpeg`,
+	`js`:    `text/javascript`,
+	`json`:  `application/json`,
+	`md`:    `text/markdown`,
+	`mkv`:   `video/x-matroska`,
+	`mp3`:   `audio/mpeg`,
+	`mp4`:   `video/mp4`,
+	`mpeg`:  `video/mpeg`,
+	`opus`:  `audio/opus`,
+	`pdf`:   `application/pdf`,
+	`png`:   `image/png`,
+	`rar`:   `application/vnd.rar`,
+	`svg`:   `image/svg+xml`,
+	`tar`:   `application/x-tar`,
+	`tif`:   `image/tiff`,
+	`tiff`:  `image/tiff`,
+	`ttf`:   `font/ttf`,
+	`txt`:   `text/plain`,
+	`wav`:   `audio/wav`,
+	`weba`:  `audio/webm`,
+	`webm`:  `video/webm`,
+	`webp`:  `image/webp`,
+	`woff`:  `font/woff`,
+	`woff2`: `font/woff2`,
+	`xhtml`: `application/xhtml+xml`,
+	`xml`:   `application/xml`,
+	`zip`:   `application/zip`,
+}
+
 func main() {
 	flagHttp := flag.String(`http`, ``, `specifies the bind address for the http service`)
 	flagIndex := flag.String(`index`, `index.html`, `specifies the name of the default index file`)
@@ -192,14 +237,25 @@ func serveDir(path string, indexName string) *Response {
 		return &Response{Code: http.StatusInternalServerError, Err: err}
 	}
 
-	return &Response{Code: http.StatusOK, Body: body}
+	headers := map[string]string{}
+	if mimeType, found := mimeTypes[`html`]; found {
+		headers[`Content-Type`] = mimeType
+	}
+
+	return &Response{Code: http.StatusOK, Headers: headers, Body: body}
 }
 
 func serveFile(path string) *Response {
 	if file, err := os.Open(path); err != nil {
 		return &Response{Code: http.StatusInternalServerError, Err: err}
 	} else {
-		return &Response{Code: http.StatusOK, Body: file}
+		headers := map[string]string{}
+		if index := strings.LastIndex(path, `.`); index >= 0 && index < len(path)-1 {
+			if mimeType, found := mimeTypes[path[index+1:]]; found {
+				headers[`Content-Type`] = mimeType
+			}
+		}
+		return &Response{Code: http.StatusOK, Headers: headers, Body: file}
 	}
 }
 
