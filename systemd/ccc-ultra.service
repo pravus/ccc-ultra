@@ -1,0 +1,13 @@
+[Unit]
+Description=carbon.cc ultra
+After=docker.service
+Requires=docker.service
+
+[Service]
+TimeoutStartSec=0
+Restart=always
+ExecStart=/opt/ccc/bin/ccc-ultra-start
+ExecStop=/opt/ccc/bin/ccc-ultra-stop
+
+[Install]
+WantedBy=multi-user.target

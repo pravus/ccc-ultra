@@ -1,0 +1,19 @@
+#!/bin/bash
+
+/usr/bin/docker stop ccc-ultra
+/usr/bin/docker rm ccc-ultra
+exec /usr/bin/docker run "$@" \
+  --rm \
+  --name ccc-ultra \
+  --hostname www.carbon.cc \
+  --network www \
+  --volume /opt/ccc/srv/www:/www:ro \
+  --volume /opt/ccc/etc/ssl/carbon.cc:/tls:ro \
+  ccc-ultra:latest \
+    -http=:8080 \
+    -https=:8443 \
+    -https-tls-cert=/tls/fullchain.pem \
+    -https-tls-key=/tls/privkey.pem \
+    -root=/www/index.html \
+    -favicon-ico=/www/favicon.ico \
+    -prometheus
