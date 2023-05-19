@@ -7,8 +7,6 @@ exec /usr/bin/docker run "$@" \
   --name ccc-ultra \
   --hostname www.carbon.cc \
   --network www \
-  --publish 7070:8080 \
-  --publish 7443:8443 \
   --volume /opt/ccc/srv/www:/www:ro \
   --volume /opt/ccc/etc/ssl/carbon.cc/fullchain.pem:/tls/cert:ro \
   --volume /opt/ccc/etc/ssl/carbon.cc/privkey.pem:/tls/key:ro \
