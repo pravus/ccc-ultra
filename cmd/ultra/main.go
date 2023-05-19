@@ -237,7 +237,7 @@ func main() {
 			if err := os.Chdir(*flags.Root); err != nil {
 				fatal(`chdir: error: %s`, err)
 			}
-			fmt.Printf(`chdir %s`, *flags.Root)
+			fmt.Printf("chdir %s\n", *flags.Root)
 		} else {
 			flags.indexBuf, err = os.ReadFile(*flags.Root)
 			if err != nil {
