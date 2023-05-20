@@ -44,7 +44,7 @@ var filesystemIndex = template.Must(template.New(`node.listing`).Parse(strings.T
 {{- end }}
 </body>
 </html>
-`)+"\n"))
+`) + "\n"))
 
 var filesystemMimeTypes = map[string]string{
 	`7z`:    `application/x-7z-compressed`,
@@ -91,8 +91,8 @@ var filesystemMimeTypes = map[string]string{
 	`zip`:   `application/zip`,
 }
 
-func NewFilesystem(driver FilesystemDriver) func (http.Handler) http.Handler {
-	return func (next http.Handler) http.Handler {
+func NewFilesystem(driver FilesystemDriver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path, err := url.PathUnescape(r.URL.String())
 			if err != nil {
@@ -111,7 +111,7 @@ func NewFilesystem(driver FilesystemDriver) func (http.Handler) http.Handler {
 				w.WriteHeader(http.StatusOK)
 				if path == `/` {
 					path = path[1:]
-				} else if len(path) > 0 && path[len(path) - 1] == '/' {
+				} else if len(path) > 0 && path[len(path)-1] == '/' {
 					path = path[:len(path)-1]
 				}
 				data := struct {
@@ -148,6 +148,7 @@ func NewFilesystem(driver FilesystemDriver) func (http.Handler) http.Handler {
 type OFSDriver struct {
 	index string
 }
+
 var _ FilesystemDriver = (*OFSDriver)(nil)
 
 func NewOFSDriver(index string) OFSDriver {
@@ -262,6 +263,7 @@ func (driver OFSDriver) file(target string, _ string, info os.FileInfo) (Filesys
 type VFSDriver struct {
 	vfs volatile.Fs
 }
+
 var _ FilesystemDriver = (*VFSDriver)(nil)
 
 func NewVFSDriver(vfs volatile.Fs) VFSDriver {
