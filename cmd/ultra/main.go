@@ -10,7 +10,6 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,13 +55,6 @@ type Service struct {
 	server   *http.Server
 }
 type Services []Service
-
-type Response struct {
-	Code    int
-	Headers map[string]string
-	Body    io.Reader
-	Err     error
-}
 
 const (
 	defHttpAddress = `localhost:8080`
