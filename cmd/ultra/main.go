@@ -297,7 +297,7 @@ func main() {
 				err = service.server.ListenAndServeTLS(``, ``)
 			}
 			if err != nil && err != http.ErrServerClosed {
-				fmt.Printf("%s.serve: error: %s\n", service.scheme, err)
+				fmt.Printf("%s.serve error: %s\n", service.scheme, err)
 			} else {
 				fmt.Printf("%s.down\n", service.scheme)
 			}
@@ -319,7 +319,7 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), *flags.TimeoutShutdown)
 			defer cancel()
 			if err := service.server.Shutdown(ctx); err != nil {
-				fmt.Printf("%s.shutdown: error: %s\n", service.scheme, err)
+				fmt.Printf("%s.shutdown error: %s\n", service.scheme, err)
 			}
 			wg.Done()
 		}()
