@@ -7,7 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-func Prometheus(label string) func (http.Handler) http.Handler {
+func Prometheus(label string) func(http.Handler) http.Handler {
 	counter := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: `ultra_` + label + `_requests`,
 		Help: `HTTP Requests`,
@@ -36,7 +36,7 @@ func Prometheus(label string) func (http.Handler) http.Handler {
 		Buckets: []float64{200, 500, 900, 1500},
 	}, []string{})
 	prometheus.MustRegister(responseSize)
-	return func (next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
 		return promhttp.InstrumentHandlerInFlight(inFlight,
 			promhttp.InstrumentHandlerDuration(duration,
 				promhttp.InstrumentHandlerCounter(counter,

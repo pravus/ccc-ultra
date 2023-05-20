@@ -247,8 +247,6 @@ func main() {
 		}
 	}
 
-	// FIXME: use vfs middleware
-
 	// services
 	var services Services
 
@@ -424,10 +422,12 @@ func (flags Flags) handle(w http.ResponseWriter, r *http.Request) *Response {
 	if err != nil {
 		return &Response{Code: http.StatusBadRequest, Err: err}
 	}
+	if path[0] == '/' {
+		path = path[1:]
+	}
 	if index := strings.IndexRune(path, '?'); index >= 0 {
 		path = path[0:index]
 	}
-	path = vpath(path)
 	switch path {
 	case ``:
 		if flags.indexBuf != nil {
@@ -544,23 +544,6 @@ func (flags Flags) file(path string) *Response {
 		}
 		return &Response{Code: http.StatusOK, Headers: headers, Body: file}
 	}
-}
-
-func vpath(source string) string {
-	vpath := []string{}
-	for _, name := range strings.Split(source, `/`) {
-		switch name {
-		case ``:
-			continue
-
-		default:
-			name = strings.ReplaceAll(name, "\x00", ``)
-			if len(name) > 0 {
-				vpath = append(vpath, name)
-			}
-		}
-	}
-	return strings.Join(vpath, `/`)
 }
 
 func fatal(format string, args ...any) {
