@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"ultra/internal/handler"
 	"ultra/internal/middleware"
 	"ultra/internal/volatile"
 
@@ -29,6 +30,8 @@ import (
 type Flags struct {
 	BearerToken     *string
 	Compression     *int
+	Ctrl            *string
+	ctrlEnabled     bool
 	FaviconIco      *string
 	Hostname        *string
 	Http            *string
@@ -51,6 +54,7 @@ type Flags struct {
 }
 
 type Service struct {
+	label    string
 	scheme   string
 	address  string
 	features []string
@@ -62,6 +66,10 @@ const (
 	envBearerToken = `ULTRA_BEARER_TOKEN`
 )
 const (
+	defCtrlAddress = `localhost:8448`
+	envCtrlAddress = `ULTRA_CTRL`
+)
+const (
 	defHttpAddress = `localhost:8080`
 	envHttpAddress = `ULTRA_HTTP`
 )
@@ -71,18 +79,18 @@ const (
 )
 
 func main() {
-	// FIXME: initialize logger
 	// boot
 	hostname, err := os.Hostname()
 	if err != nil {
 		fatal(`hostname: error: %s`, err)
 	}
-	fmt.Printf("ultra %s\n", hostname)
+	fmt.Println(`ultra ` + hostname)
 
 	// flags
 	flags := Flags{
 		BearerToken:     flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
 		Compression:     flag.Int(`compression`, 5, `specifies the compression level`),
+		Ctrl:            flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
 		FaviconIco:      flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Hostname:        flag.String(`hostname`, hostname, `specifies the hostname`),
 		Http:            flag.String(`http`, ``, `specifies the bind address for the http service`),
@@ -102,6 +110,8 @@ func main() {
 	}
 	flag.Parse()
 
+	// FIXME: initialize logger
+
 	// env
 	{
 		first := func(list ...string) *string {
@@ -114,11 +124,13 @@ func main() {
 		}
 
 		flags.BearerToken = first(*flags.BearerToken, os.Getenv(envBearerToken))
+		flags.Ctrl = first(*flags.Ctrl, os.Getenv(envCtrlAddress), defCtrlAddress)
 		flags.Http = first(*flags.Http, os.Getenv(envHttpAddress), defHttpAddress)
 		flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
 	}
 
 	// validate
+	flags.ctrlEnabled = flags.Ctrl != nil && *flags.Ctrl != ``
 	flags.httpEnabled = flags.Http != nil && *flags.Http != ``
 	flags.httpsEnabled = flags.Https != nil && *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
 
@@ -201,15 +213,6 @@ func main() {
 			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
 			features = append(features, `ofs`)
 		}
-		if !flags.httpsEnabled && flags.BearerToken != nil && *flags.BearerToken != `` {
-			router.Route(`/^`, func(router chi.Router) {
-				router.Use(middleware.Bearer(*flags.BearerToken))
-				if *flags.Prometheus {
-					router.Mount(`/metrics/prometheus`, promhttp.Handler())
-				}
-			})
-			features = append(features, `ctrl`)
-		}
 		var root http.Handler
 		if *flags.HttpsOnly {
 			root = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -219,11 +222,12 @@ func main() {
 			})
 			features = append(features, `https-only`)
 		} else {
-			root = middleware.Cocytus(nil)
+			root = http.HandlerFunc(handler.Cocytus)
 		}
 		router.Mount(`/`, root)
+		router.NotFound(http.HandlerFunc(handler.Cocytus))
 		sort.Strings(features)
-		services = append(services, Service{scheme: `http`, features: features, server: &http.Server{
+		services = append(services, Service{label: `http`, scheme: `http`, features: features, server: &http.Server{
 			Addr:         *flags.Http,
 			Handler:      router,
 			IdleTimeout:  *flags.TimeoutIdle,
@@ -271,20 +275,12 @@ func main() {
 			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
 			features = append(features, `ofs`)
 		}
-		if flags.BearerToken != nil && *flags.BearerToken != `` {
-			router.Route(`/^`, func(router chi.Router) {
-				router.Use(middleware.Bearer(*flags.BearerToken))
-				if *flags.Prometheus {
-					router.Mount(`/metrics/prometheus`, promhttp.Handler())
-				}
-			})
-			features = append(features, `ctrl`)
-		}
 		var root http.Handler
-		root = middleware.Cocytus(nil)
+		root = http.HandlerFunc(handler.Cocytus)
 		router.Mount(`/`, root)
+		router.NotFound(http.HandlerFunc(handler.Cocytus))
 		sort.Strings(features)
-		services = append(services, Service{scheme: `https`, features: features, server: &http.Server{
+		services = append(services, Service{label: `https`, scheme: `https`, features: features, server: &http.Server{
 			Addr:         *flags.Https,
 			Handler:      router,
 			TLSConfig:    tlsConfig,
@@ -294,6 +290,37 @@ func main() {
 		}})
 	} else {
 		fmt.Printf("https.disabled\n")
+	}
+
+	// ctrl
+	if flags.ctrlEnabled {
+		features := []string{}
+		router := chi.NewRouter()
+		if flags.BearerToken != nil && *flags.BearerToken != `` {
+			router.Use(middleware.Bearer(*flags.BearerToken))
+			features = append(features, `bearer`)
+		}
+		router.Use(middleware.Control()...)
+		if *flags.Prometheus {
+			router.Use(middleware.Prometheus(`ctrl`))
+			features = append(features, `prometheus`)
+		}
+		router.Route(`/metrics`, func(router chi.Router) {
+			if *flags.Prometheus {
+				router.Mount(`/prometheus`, promhttp.Handler())
+			}
+		})
+		router.NotFound(http.HandlerFunc(handler.Cocytus))
+		sort.Strings(features)
+		services = append(services, Service{label: `ctrl`, scheme: `http`, features: features, server: &http.Server{
+			Addr:         *flags.Ctrl,
+			Handler:      router,
+			IdleTimeout:  *flags.TimeoutIdle,
+			ReadTimeout:  *flags.TimeoutRead,
+			WriteTimeout: *flags.TimeoutWrite,
+		}})
+	} else {
+		fmt.Printf("ctrl.disabled\n")
 	}
 
 	// start
@@ -308,7 +335,7 @@ func main() {
 			if len(service.features) > 0 {
 				features = ` ` + strings.Join(service.features, ` `)
 			}
-			fmt.Printf("%s.up %s://%s/%s\n", service.scheme, service.scheme, connect, features)
+			fmt.Printf("%s.up %s://%s/%s\n", service.label, service.scheme, connect, features)
 			var err error
 			if service.server.TLSConfig == nil {
 				err = service.server.ListenAndServe()
@@ -316,9 +343,9 @@ func main() {
 				err = service.server.ListenAndServeTLS(``, ``)
 			}
 			if err != nil && err != http.ErrServerClosed {
-				fmt.Printf("%s.serve error: %s\n", service.scheme, err)
+				fmt.Printf("%s.serve error: %s\n", service.label, err)
 			} else {
-				fmt.Printf("%s.down\n", service.scheme)
+				fmt.Printf("%s.down\n", service.label)
 			}
 		}()
 	}
@@ -338,7 +365,7 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), *flags.TimeoutShutdown)
 			defer cancel()
 			if err := service.server.Shutdown(ctx); err != nil {
-				fmt.Printf("%s.shutdown error: %s\n", service.scheme, err)
+				fmt.Printf("%s.shutdown error: %s\n", service.label, err)
 			}
 			wg.Done()
 		}()

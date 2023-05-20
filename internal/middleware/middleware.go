@@ -12,9 +12,21 @@ func Always(timeout time.Duration, compress int) []func(http.Handler) http.Handl
 		middleware.CleanPath,
 		middleware.RequestID,
 		middleware.RealIP,
-		Suppressor(middleware.Logger),
+		middleware.Logger,
 		middleware.Recoverer,
 		middleware.Timeout(timeout),
 		middleware.Compress(compress),
+	}
+}
+
+func Control() []func(http.Handler) http.Handler {
+	return []func(http.Handler) http.Handler{
+		middleware.CleanPath,
+		middleware.RequestID,
+		middleware.RealIP,
+		Suppressor(middleware.Logger),
+		middleware.Recoverer,
+		middleware.Timeout(15 * time.Second),
+		middleware.Compress(10),
 	}
 }
