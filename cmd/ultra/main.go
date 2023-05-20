@@ -6,24 +6,21 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"html/template"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"ccc-ultra/internal/middleware"
+	"ccc-ultra/internal/volatile"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -32,8 +29,6 @@ import (
 type Flags struct {
 	Compression     *int
 	FaviconIco      *string
-	faviconBuf      []byte
-	faviconType     string
 	Hostname        *string
 	Http            *string
 	httpEnabled     bool
@@ -43,7 +38,7 @@ type Flags struct {
 	HttpsTlsCert    *string
 	HttpsTlsKey     *string
 	Index           *string
-	indexBuf        []byte
+	ofsEnabled      bool
 	Prometheus      *bool
 	TimeoutIdle     *time.Duration
 	TimeoutRead     *time.Duration
@@ -51,14 +46,14 @@ type Flags struct {
 	TimeoutShutdown *time.Duration
 	TimeoutWrite    *time.Duration
 	RobotsTxt       *string
-	robotsBuf       []byte
 	Root            *string
 }
 
 type Service struct {
-	scheme  string
-	address string
-	server  *http.Server
+	scheme   string
+	address  string
+	features []string
+	server   *http.Server
 }
 type Services []Service
 
@@ -78,78 +73,16 @@ const (
 	envHttpsAddress = `ULTRA_HTTPS`
 )
 
-// FIXME: turn this into a flag
-var htmlIndex = template.Must(template.New(`index`).Parse(strings.TrimSpace(`
-<!doctype html>
-
-<html>
-<head>
-  <title>{{ .Path }}</title>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-</head>
-<body>
-{{- $path := .Path }}
-{{- range .Names }}
-<a href="{{ $path }}{{ . }}">{{ . }}</a><br>
-{{- end }}
-</body>
-</html>
-`)))
-
-// FIXME: turn this into a flag
-var mimeTypes = map[string]string{
-	`7z`:    `application/x-7z-compressed`,
-	`aac`:   `audio/aac`,
-	`avi`:   `video/x-msvideo`,
-	`bin`:   `application/octet-stream`,
-	`bmp`:   `image/bmp`,
-	`bz`:    `application/x-bzip`,
-	`bz2`:   `application/x-bzip2`,
-	`css`:   `text/css`,
-	`csv`:   `text/csv`,
-	`flac`:  `audio/flac`,
-	`gif`:   `image/gif`,
-	`gz`:    `application/gzip`,
-	`htm`:   `text/html`,
-	`html`:  `text/html`,
-	`jpeg`:  `image/jpeg`,
-	`jpg`:   `image/jpeg`,
-	`js`:    `text/javascript`,
-	`json`:  `application/json`,
-	`md`:    `text/markdown`,
-	`mkv`:   `video/x-matroska`,
-	`mp3`:   `audio/mpeg`,
-	`mp4`:   `video/mp4`,
-	`mpeg`:  `video/mpeg`,
-	`opus`:  `audio/opus`,
-	`pdf`:   `application/pdf`,
-	`png`:   `image/png`,
-	`rar`:   `application/vnd.rar`,
-	`svg`:   `image/svg+xml`,
-	`tar`:   `application/x-tar`,
-	`tif`:   `image/tiff`,
-	`tiff`:  `image/tiff`,
-	`ttf`:   `font/ttf`,
-	`txt`:   `text/plain`,
-	`wav`:   `audio/wav`,
-	`weba`:  `audio/webm`,
-	`webm`:  `video/webm`,
-	`webp`:  `image/webp`,
-	`woff`:  `font/woff`,
-	`woff2`: `font/woff2`,
-	`xhtml`: `application/xhtml+xml`,
-	`xml`:   `application/xml`,
-	`zip`:   `application/zip`,
-}
-
 func main() {
+	// FIXME: initialize logger
+	// boot
 	hostname, err := os.Hostname()
 	if err != nil {
 		fatal(`hostname: error: %s`, err)
 	}
 	fmt.Printf("ultra %s\n", hostname)
 
+	// flags
 	flags := Flags{
 		Compression:     flag.Int(`compression`, 5, `specifies the compression level`),
 		FaviconIco:      flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
@@ -171,6 +104,7 @@ func main() {
 	}
 	flag.Parse()
 
+	// env
 	{
 		first := func(list ...string) *string {
 			for _, value := range list {
@@ -184,11 +118,10 @@ func main() {
 		flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
 	}
 
-	// calculate meta flags
+	// validate
 	flags.httpEnabled = flags.Http != nil && *flags.Http != ``
 	flags.httpsEnabled = flags.Https != nil && *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
 
-	// validate settings
 	if *flags.Root == `` {
 		fatal(`-root must not be empty`)
 	}
@@ -198,52 +131,54 @@ func main() {
 		}
 	}
 
-	// load buffers
-	{
-		var err error
-		if *flags.FaviconIco != `` {
-			flags.faviconBuf, err = os.ReadFile(*flags.FaviconIco)
+	//vfs
+	// FIXME: add flag to just auto load favicon, index.html, robots.txt from cwd (-manifest)
+	vfs := volatile.NewFs()
+	if *flags.FaviconIco != `` {
+		if err := vfs.FromFile(`/favicon.ico`, *flags.FaviconIco, func(data []byte) (string, error) {
+			image, format, err := image.Decode(bytes.NewBuffer(data))
 			if err != nil {
-				fatal(`load: error: %s`, err)
-			}
-			image, format, err := image.Decode(bytes.NewBuffer(flags.faviconBuf))
-			if err != nil {
-				fatal(`decode: error: %s`, err)
+				return ``, err
 			}
 			bounds := image.Bounds()
 			height := bounds.Max.Y - bounds.Min.Y
 			width := bounds.Max.X - bounds.Min.X
-			flags.faviconType = `image/` + format
-			fmt.Printf("load favicon.ico %s %d (%dx%d; %s)\n", *flags.FaviconIco, len(flags.faviconBuf), width, height, flags.faviconType)
+			fmt.Printf("load favicon.ico %s %d (%dx%d; %s)\n", *flags.FaviconIco, len(data), width, height, format)
+			return `image/` + format, nil
+		}); err != nil {
+			fatal(`load error: %s`, err)
 		}
-		if *flags.RobotsTxt != `` {
-			flags.robotsBuf, err = os.ReadFile(*flags.RobotsTxt)
-			if err != nil {
-				fatal(`load: error: %s`, err)
-			}
-			fmt.Printf("load robots.txt %s %d\n", *flags.RobotsTxt, len(flags.robotsBuf))
+	}
+	if *flags.RobotsTxt != `` {
+		if err := vfs.FromFile(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
+			fmt.Printf("load robots.txt %s %d\n", *flags.RobotsTxt, len(data))
+			return `text/plain`, nil
+		}); err != nil {
+			fatal(`load error: %s`, err)
 		}
 	}
 
-	// FIXME: add flag to just auto load favicon, index.html, robots.txt from cwd
-
-	// determine root
-	if *flags.Root != `.` {
+	// root
+	if *flags.Root == `.` {
+		flags.ofsEnabled = true
+	} else {
 		info, err := os.Stat(*flags.Root)
 		if err != nil {
-			fatal(`stat: error: %s`, err)
+			fatal(`stat error: %s`, err)
 		}
 		if info.IsDir() {
 			if err := os.Chdir(*flags.Root); err != nil {
-				fatal(`chdir: error: %s`, err)
+				fatal(`chdir error: %s`, err)
 			}
+			flags.ofsEnabled = true
 			fmt.Printf("chdir %s\n", *flags.Root)
 		} else {
-			flags.indexBuf, err = os.ReadFile(*flags.Root)
-			if err != nil {
-				fatal(`load: error: %s`, err)
+			if err := vfs.FromFile(`/`, *flags.Root, func(data []byte) (string, error) {
+				fmt.Printf("load root %s %d\n", *flags.Root, len(data))
+				return `text/html`, nil
+			}); err != nil {
+				fatal(`load error: %s`, err)
 			}
-			fmt.Printf("load root %s %d\n", *flags.Root, len(flags.indexBuf))
 		}
 	}
 
@@ -252,9 +187,19 @@ func main() {
 
 	// http
 	if flags.httpEnabled {
+		features := []string{}
 		router := chi.NewRouter().With(middleware.Always(*flags.TimeoutRequest, *flags.Compression)...)
 		if *flags.Prometheus {
 			router.Use(middleware.Prometheus(`http`))
+			features = append(features, `prometheus`)
+		}
+		if vfs.Len() > 0 {
+			router.Use(middleware.NewFilesystem(middleware.NewVFSDriver(vfs)))
+			features = append(features, `vfs`)
+		}
+		if flags.ofsEnabled {
+			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
+			features = append(features, `ofs`)
 		}
 		var root http.Handler
 		if *flags.HttpsOnly {
@@ -264,7 +209,7 @@ func main() {
 				http.Redirect(w, r, `https://`+r.Host+r.URL.String(), http.StatusMovedPermanently)
 			})
 		} else {
-			root = flags.handler()
+			root = middleware.Cocytus(nil)
 		}
 		router.Mount(`/`, root)
 		router.Route(`/^`, func(router chi.Router) {
@@ -272,7 +217,7 @@ func main() {
 				router.Mount(`/metrics`, promhttp.Handler())
 			}
 		})
-		services = append(services, Service{scheme: `http`, server: &http.Server{
+		services = append(services, Service{scheme: `http`, features: features, server: &http.Server{
 			Addr:         *flags.Http,
 			Handler:      router,
 			IdleTimeout:  *flags.TimeoutIdle,
@@ -285,6 +230,7 @@ func main() {
 
 	// https
 	if flags.httpsEnabled {
+		features := []string{`tls`}
 		cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
 		if err != nil {
 			fatal(`load key pair: error: %s`, err)
@@ -309,16 +255,25 @@ func main() {
 		router := chi.NewRouter().With(middleware.Always(*flags.TimeoutRequest, *flags.Compression)...)
 		if *flags.Prometheus {
 			router.Use(middleware.Prometheus(`https`))
+			features = append(features, `prometheus`)
+		}
+		if vfs.Len() > 0 {
+			router.Use(middleware.NewFilesystem(middleware.NewVFSDriver(vfs)))
+			features = append(features, `vfs`)
+		}
+		if flags.ofsEnabled {
+			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
+			features = append(features, `ofs`)
 		}
 		var root http.Handler
-		root = flags.handler()
+		root = middleware.Cocytus(nil)
 		router.Mount(`/`, root)
 		router.Route(`/^`, func(router chi.Router) {
 			if *flags.Prometheus {
 				router.Mount(`/metrics`, promhttp.Handler())
 			}
 		})
-		services = append(services, Service{scheme: `https`, server: &http.Server{
+		services = append(services, Service{scheme: `https`, features: features, server: &http.Server{
 			Addr:         *flags.Https,
 			Handler:      router,
 			TLSConfig:    tlsConfig,
@@ -330,7 +285,7 @@ func main() {
 		fmt.Printf("https.disabled\n")
 	}
 
-	// start services
+	// start
 	for _, service := range services {
 		service := service
 		go func() {
@@ -338,18 +293,11 @@ func main() {
 			if strings.IndexRune(connect, ':') == 0 {
 				connect = fmt.Sprintf(`%s%s`, hostname, connect)
 			}
-			features := []string{}
-			if service.server.TLSConfig != nil {
-				features = append(features, `(tls`)
+			features := ``
+			if len(service.features) > 0 {
+				features = ` ` + strings.Join(service.features, ` `)
 			}
-			if *flags.Prometheus {
-				features = append(features, `(prometheus`)
-			}
-			options := ``
-			if len(features) > 0 {
-				options = strings.Join(features, ` `)
-			}
-			fmt.Printf("%s.up %s://%s/ %s\n", service.scheme, service.scheme, connect, options)
+			fmt.Printf("%s.up %s://%s/%s\n", service.scheme, service.scheme, connect, features)
 			var err error
 			if service.server.TLSConfig == nil {
 				err = service.server.ListenAndServe()
@@ -365,13 +313,12 @@ func main() {
 	}
 
 	// into the beyond
-	<-func() <-chan os.Signal {
-		signals := make(chan os.Signal, 1)
+	<-func(signals chan os.Signal) <-chan os.Signal {
 		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 		return signals
-	}()
+	}(make(chan os.Signal, 1))
 
-	// stop services
+	// halt
 	wg := sync.WaitGroup{}
 	for _, service := range services {
 		service := service
@@ -386,164 +333,6 @@ func main() {
 		}()
 	}
 	wg.Wait()
-}
-
-func (flags Flags) handler() http.HandlerFunc {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			response := flags.handle(w, r)
-			if response.Headers != nil {
-				for key, value := range response.Headers {
-					w.Header().Add(key, value)
-				}
-			}
-			w.WriteHeader(response.Code)
-
-			if response.Body == nil {
-				response.Body = strings.NewReader(fmt.Sprintf("%d %s\r\n", response.Code, http.StatusText(response.Code)))
-			}
-			_, err := io.Copy(w, response.Body)
-			if err != nil {
-				if response.Err == nil {
-					response.Err = fmt.Errorf(`copy: error: %v`, err)
-				} else {
-					response.Err = fmt.Errorf(`copy: error: %v; %w`, err, response.Err)
-				}
-			}
-		default:
-			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		}
-	})
-}
-
-func (flags Flags) handle(w http.ResponseWriter, r *http.Request) *Response {
-	path, err := url.PathUnescape(r.URL.String())
-	if err != nil {
-		return &Response{Code: http.StatusBadRequest, Err: err}
-	}
-	if path[0] == '/' {
-		path = path[1:]
-	}
-	if index := strings.IndexRune(path, '?'); index >= 0 {
-		path = path[0:index]
-	}
-	switch path {
-	case ``:
-		if flags.indexBuf != nil {
-			return &Response{
-				Code: http.StatusOK,
-				Body: bytes.NewReader(flags.indexBuf),
-				Headers: map[string]string{
-					`content-type`: `text/html`,
-				},
-			}
-		}
-		return flags.dir(path)
-	case `favicon.ico`:
-		if flags.faviconBuf != nil {
-			return &Response{
-				Code: http.StatusOK,
-				Body: bytes.NewReader(flags.faviconBuf),
-				Headers: map[string]string{
-					`content-type`: flags.faviconType,
-				},
-			}
-		}
-		return &Response{Code: http.StatusNotFound}
-	case `robots.txt`:
-		if flags.robotsBuf != nil {
-			return &Response{
-				Code: http.StatusOK,
-				Body: bytes.NewReader(flags.robotsBuf),
-				Headers: map[string]string{
-					`content-type`: `text/plain`,
-				},
-			}
-		}
-		return &Response{Code: http.StatusNotFound}
-	}
-	if flags.indexBuf != nil {
-		return &Response{Code: http.StatusNotFound}
-	}
-	if fileinfo, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return &Response{Code: http.StatusNotFound}
-		} else {
-			return &Response{Code: http.StatusInternalServerError, Err: err}
-		}
-	} else if fileinfo.IsDir() {
-		return flags.dir(path)
-	} else {
-		return flags.file(path)
-	}
-}
-
-func (flags Flags) dir(path string) *Response {
-	dir := path
-	if dir == `` {
-		dir = `.`
-	}
-
-	if *flags.Index != `` {
-		name := fmt.Sprintf(`%s/%s`, dir, *flags.Index)
-		fileinfo, err := os.Stat(name)
-		if err == nil && !fileinfo.IsDir() {
-			return flags.file(name)
-		}
-		if err != nil && !os.IsNotExist(err) {
-			return &Response{Code: http.StatusInternalServerError, Err: err}
-		}
-	}
-
-	list, err := ioutil.ReadDir(dir)
-	if err != nil {
-		return &Response{Code: http.StatusInternalServerError, Err: err}
-	}
-
-	names := []string{}
-	if path == `` {
-		path = `/`
-	} else {
-		names = append(names, `..`)
-		path = `/` + path + `/`
-	}
-	for _, info := range list {
-		names = append(names, info.Name())
-	}
-	sort.Strings(names)
-
-	body := bytes.NewBuffer([]byte{})
-	if err := htmlIndex.Execute(body, struct {
-		Path  string
-		Names []string
-	}{
-		Path:  path,
-		Names: names,
-	}); err != nil {
-		return &Response{Code: http.StatusInternalServerError, Err: err}
-	}
-
-	headers := map[string]string{}
-	if mimeType, found := mimeTypes[`html`]; found {
-		headers[`Content-Type`] = mimeType
-	}
-
-	return &Response{Code: http.StatusOK, Headers: headers, Body: body}
-}
-
-func (flags Flags) file(path string) *Response {
-	if file, err := os.Open(path); err != nil {
-		return &Response{Code: http.StatusInternalServerError, Err: err}
-	} else {
-		headers := map[string]string{}
-		if index := strings.LastIndex(path, `.`); index >= 0 && index < len(path)-1 {
-			if mimeType, found := mimeTypes[path[index+1:]]; found {
-				headers[`Content-Type`] = mimeType
-			}
-		}
-		return &Response{Code: http.StatusOK, Headers: headers, Body: file}
-	}
 }
 
 func fatal(format string, args ...any) {
