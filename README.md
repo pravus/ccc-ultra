@@ -1,4 +1,4 @@
-# ccc-ultra
+# ultra
 
 ## Description
 

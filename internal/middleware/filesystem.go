@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"ccc-ultra/internal/volatile"
+	"ultra/internal/volatile"
 )
 
 type FilesystemNode struct {

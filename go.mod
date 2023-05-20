@@ -1,4 +1,4 @@
-module ccc-ultra
+module ultra
 
 go 1.20
 

@@ -13,19 +13,21 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"ccc-ultra/internal/middleware"
-	"ccc-ultra/internal/volatile"
+	"ultra/internal/middleware"
+	"ultra/internal/volatile"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Flags struct {
+	BearerToken     *string
 	Compression     *int
 	FaviconIco      *string
 	Hostname        *string
@@ -57,6 +59,9 @@ type Service struct {
 type Services []Service
 
 const (
+	envBearerToken = `ULTRA_BEARER_TOKEN`
+)
+const (
 	defHttpAddress = `localhost:8080`
 	envHttpAddress = `ULTRA_HTTP`
 )
@@ -76,6 +81,7 @@ func main() {
 
 	// flags
 	flags := Flags{
+		BearerToken:     flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
 		Compression:     flag.Int(`compression`, 5, `specifies the compression level`),
 		FaviconIco:      flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Hostname:        flag.String(`hostname`, hostname, `specifies the hostname`),
@@ -106,6 +112,8 @@ func main() {
 			}
 			return nil
 		}
+
+		flags.BearerToken = first(*flags.BearerToken, os.Getenv(envBearerToken))
 		flags.Http = first(*flags.Http, os.Getenv(envHttpAddress), defHttpAddress)
 		flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
 	}
@@ -193,6 +201,15 @@ func main() {
 			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
 			features = append(features, `ofs`)
 		}
+		if !flags.httpsEnabled && flags.BearerToken != nil && *flags.BearerToken != `` {
+			router.Route(`/^`, func(router chi.Router) {
+				router.Use(middleware.Bearer(*flags.BearerToken))
+				if *flags.Prometheus {
+					router.Mount(`/metrics/prometheus`, promhttp.Handler())
+				}
+			})
+			features = append(features, `ctrl`)
+		}
 		var root http.Handler
 		if *flags.HttpsOnly {
 			root = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -200,15 +217,12 @@ func main() {
 				// FIXME: need a solid url generator
 				http.Redirect(w, r, `https://`+r.Host+r.URL.String(), http.StatusMovedPermanently)
 			})
+			features = append(features, `https-only`)
 		} else {
 			root = middleware.Cocytus(nil)
 		}
 		router.Mount(`/`, root)
-		router.Route(`/^`, func(router chi.Router) {
-			if *flags.Prometheus {
-				router.Mount(`/metrics`, promhttp.Handler())
-			}
-		})
+		sort.Strings(features)
 		services = append(services, Service{scheme: `http`, features: features, server: &http.Server{
 			Addr:         *flags.Http,
 			Handler:      router,
@@ -257,14 +271,19 @@ func main() {
 			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
 			features = append(features, `ofs`)
 		}
+		if flags.BearerToken != nil && *flags.BearerToken != `` {
+			router.Route(`/^`, func(router chi.Router) {
+				router.Use(middleware.Bearer(*flags.BearerToken))
+				if *flags.Prometheus {
+					router.Mount(`/metrics/prometheus`, promhttp.Handler())
+				}
+			})
+			features = append(features, `ctrl`)
+		}
 		var root http.Handler
 		root = middleware.Cocytus(nil)
 		router.Mount(`/`, root)
-		router.Route(`/^`, func(router chi.Router) {
-			if *flags.Prometheus {
-				router.Mount(`/metrics`, promhttp.Handler())
-			}
-		})
+		sort.Strings(features)
 		services = append(services, Service{scheme: `https`, features: features, server: &http.Server{
 			Addr:         *flags.Https,
 			Handler:      router,
