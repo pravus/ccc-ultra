@@ -31,6 +31,7 @@ type Flags struct {
 	BearerToken     *string
 	Compression     *int
 	Ctrl            *string
+	CtrlLogger      *bool
 	ctrlEnabled     bool
 	FaviconIco      *string
 	Hostname        *string
@@ -91,6 +92,7 @@ func main() {
 		BearerToken:     flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
 		Compression:     flag.Int(`compression`, 5, `specifies the compression level`),
 		Ctrl:            flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
+		CtrlLogger:      flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
 		FaviconIco:      flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Hostname:        flag.String(`hostname`, hostname, `specifies the hostname`),
 		Http:            flag.String(`http`, ``, `specifies the bind address for the http service`),
@@ -300,7 +302,7 @@ func main() {
 			router.Use(middleware.Bearer(*flags.BearerToken))
 			features = append(features, `bearer`)
 		}
-		router.Use(middleware.Control()...)
+		router.Use(middleware.Control(*flags.CtrlLogger)...)
 		if *flags.Prometheus {
 			router.Use(middleware.Prometheus(`ctrl`))
 			features = append(features, `prometheus`)

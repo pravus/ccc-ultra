@@ -19,14 +19,19 @@ func Always(timeout time.Duration, compress int) []func(http.Handler) http.Handl
 	}
 }
 
-func Control() []func(http.Handler) http.Handler {
-	return []func(http.Handler) http.Handler{
+func Control(useLogger bool) []func(http.Handler) http.Handler {
+	middlewares := []func(http.Handler) http.Handler{
 		middleware.CleanPath,
 		middleware.RequestID,
 		middleware.RealIP,
-		Suppressor(middleware.Logger),
-		middleware.Recoverer,
-		middleware.Timeout(15 * time.Second),
-		middleware.Compress(10),
 	}
+	if useLogger {
+		middlewares = append(middlewares, middleware.Logger)
+	}
+	middlewares = append(middlewares,
+		middleware.Recoverer,
+		middleware.Timeout(15*time.Second),
+		middleware.Compress(10),
+	)
+	return middlewares
 }
