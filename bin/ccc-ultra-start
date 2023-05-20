@@ -7,11 +7,13 @@ exec /usr/bin/docker run "$@" \
   --name ccc-ultra \
   --hostname www.carbon.cc \
   --network www \
+  --publish 10.36.0.1:8448:8448 \
   --env-file /opt/ccc/etc/ultra/env \
   --volume /opt/ccc/srv/www:/www:ro \
   --volume /opt/ccc/etc/ssl/carbon.cc/fullchain.pem:/tls/cert:ro \
   --volume /opt/ccc/etc/ssl/carbon.cc/privkey.pem:/tls/key:ro \
   ccc-ultra:latest \
+    -ctrl=:8448 \
     -http=:8080 \
     -https=:8443 \
     -https-tls-cert=/tls/cert \
