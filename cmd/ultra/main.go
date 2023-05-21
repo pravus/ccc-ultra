@@ -290,6 +290,7 @@ func main() {
 		if flags.httpEnabled {
 			scheme := `http`
 			features := []string{}
+			metrics := middleware.Prometheus(label)
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
 			router.NotFound(http.HandlerFunc(handler.Cocytus))
@@ -310,15 +311,19 @@ func main() {
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.Prometheus {
 					features = append(features, `prometheus`)
-					root = middleware.Prometheus(label)(root)
+					root = metrics(root)
 				}
 				return root
 			}())
 			if len(flags.ReverseProxies) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
-					handler := httputil.NewSingleHostReverseProxy(proxy.Url)
-					router.Mount(proxy.Mount, middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter))
+					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
+					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
+					if *flags.Prometheus {
+						handler = metrics(handler)
+					}
+					router.Mount(proxy.Mount, handler)
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
 				}
 			}
@@ -341,6 +346,7 @@ func main() {
 		if flags.httpsEnabled {
 			scheme := `https`
 			features := []string{`tls`}
+			metrics := middleware.Prometheus(label)
 			formatter := volatile.NewLogFormatter(label, logger)
 			cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
 			if err != nil {
@@ -378,15 +384,19 @@ func main() {
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.Prometheus {
 					features = append(features, `prometheus`)
-					root = middleware.Prometheus(label)(root)
+					root = metrics(root)
 				}
 				return root
 			}())
 			if len(flags.ReverseProxiesTls) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxiesTls {
-					handler := httputil.NewSingleHostReverseProxy(proxy.Url)
-					router.Mount(proxy.Mount, middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter))
+					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
+					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
+					if *flags.Prometheus {
+						handler = metrics(handler)
+					}
+					router.Mount(proxy.Mount, handler)
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
 				}
 			}
@@ -410,25 +420,32 @@ func main() {
 		if flags.ctrlEnabled {
 			scheme := `http`
 			features := []string{}
+			metrics := middleware.Prometheus(label)
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
 			router.NotFound(http.HandlerFunc(handler.Cocytus))
 			router.Mount(`/`, func() http.Handler {
 				root := http.Handler(http.HandlerFunc(handler.Cocytus))
+				root = middleware.Control(root, *flags.CtrlLogger, formatter)
 				if flags.BearerToken != nil && *flags.BearerToken != `` {
 					features = append(features, `bearer`)
 					root = middleware.Bearer(*flags.BearerToken)(root)
 				}
 				if *flags.Prometheus {
 					features = append(features, `prometheus`)
-					root = middleware.Prometheus(label)(root)
+					root = metrics(root)
 				}
-				return middleware.Control(root, *flags.CtrlLogger, formatter)
+				return root
 			}())
 			router.Route(`/metrics`, func(router chi.Router) {
 				if *flags.Prometheus {
-					handler := promhttp.Handler()
-					router.Mount(`/prometheus`, middleware.Control(handler, *flags.CtrlLogger, formatter))
+					handler := http.Handler(promhttp.Handler())
+					handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
+					if flags.BearerToken != nil && *flags.BearerToken != `` {
+						handler = middleware.Bearer(*flags.BearerToken)(handler)
+					}
+					handler = metrics(handler)
+					router.Mount(`/prometheus`, handler)
 				}
 			})
 			sort.Strings(features)
