@@ -7,31 +7,33 @@ import (
 	"os"
 	"path"
 	"time"
+
+	"ultra/internal/model"
 )
 
-type Fs struct {
+type FsDriver struct {
 	root map[string]FsEntry
 }
 
 type FsEntry struct {
-	Name string
-	When time.Time
-	Mime string
-	Data []byte
+	data []byte
+	node model.FsNode
 }
 
-func NewFs() Fs {
-	fs := Fs{
+var _ model.FsDriver = (*FsDriver)(nil)
+
+func NewFsDriver() FsDriver {
+	fs := FsDriver{
 		root: map[string]FsEntry{},
 	}
 	return fs
 }
 
-func (fs Fs) Len() int {
+func (fs FsDriver) Len() int {
 	return len(fs.root)
 }
 
-func (fs Fs) FromFile(target string, name string, wand func([]byte) (string, error)) error {
+func (fs FsDriver) Load(target string, name string, wand func([]byte) (string, error)) error {
 	if _, ok := fs.root[target]; ok {
 		return fmt.Errorf(`path "%s" already exists`, target)
 	}
@@ -39,28 +41,30 @@ func (fs Fs) FromFile(target string, name string, wand func([]byte) (string, err
 	if err != nil {
 		return err
 	}
-	mime, err := wand(data)
+	mimeType, err := wand(data)
 	if err != nil {
 		return err
 	}
 	_, name = path.Split(target)
 	fs.root[target] = FsEntry{
-		Name: name,
-		When: time.Now().UTC(),
-		Mime: mime,
-		Data: data,
+		data: data,
+		node: model.FsNode{
+			Name:     name,
+			IsDir:    false,
+			Modified: time.Now().UTC(),
+			MimeType: mimeType,
+			Size:     int64(len(data)),
+		},
 	}
 	return nil
 }
 
-func (fs Fs) At(target string) (FsEntry, error) {
-	if entry, ok := fs.root[target]; !ok {
-		return FsEntry{}, fmt.Errorf(`path "%s" not found`, target)
+func (fs FsDriver) Get(path string) (model.FsNode, error) {
+	if meta, ok := fs.root[path]; !ok {
+		return model.FsNode{}, fmt.Errorf(`not found`)
 	} else {
-		return entry, nil
+		node := meta.node
+		node.Data = io.NopCloser(bytes.NewBuffer(meta.data))
+		return node, nil
 	}
-}
-
-func (entry FsEntry) ReadCloser() io.ReadCloser {
-	return io.NopCloser(bytes.NewBuffer(entry.Data))
 }

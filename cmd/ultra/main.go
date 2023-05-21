@@ -23,6 +23,7 @@ import (
 
 	"ultra/internal/handler"
 	"ultra/internal/middleware"
+	"ultra/internal/oe"
 	"ultra/internal/volatile"
 
 	"github.com/go-chi/chi/v5"
@@ -200,8 +201,14 @@ func main() {
 		}
 	}
 
-	//vfs
-	vfs := volatile.NewFs()
+	// wand
+	wand := volatile.Magic()
+
+	// vfs
+	vfs := volatile.NewFsDriver()
+
+	// ofs
+	ofs := oe.NewFsDriver(*flags.Root, *flags.Index, wand)
 
 	// root
 	if *flags.Root == `.` {
@@ -218,9 +225,9 @@ func main() {
 			flags.ofsEnabled = true
 			logger.Info(`ofs.chdir %s`, *flags.Root)
 		} else {
-			if err := vfs.FromFile(`/`, *flags.Root, func(data []byte) (string, error) {
+			if err := vfs.Load(`/`, *flags.Root, func(data []byte) (string, error) {
 				logger.Info(`vfs.load root %s %d`, *flags.Root, len(data))
-				return `text/html`, nil
+				return wand.Zap(*flags.Root), nil
 			}); err != nil {
 				logger.Fatal(`vfs.load error: %s`, err)
 			}
@@ -229,9 +236,9 @@ func main() {
 
 	// other
 	if *flags.Ez {
-		if err := vfs.FromFile(`/`, *flags.Index, func(data []byte) (string, error) {
+		if err := vfs.Load(`/`, *flags.Index, func(data []byte) (string, error) {
 			logger.Info(`vfs.load root %s %d`, *flags.Index, len(data))
-			return `text/html`, nil
+			return wand.Zap(*flags.Index), nil
 		}); err != nil {
 			logger.Fatal(`vfs.load error: %s`, err)
 		}
@@ -258,7 +265,7 @@ func main() {
 		}
 	}
 	if *flags.FaviconIco != `` {
-		if err := vfs.FromFile(`/favicon.ico`, *flags.FaviconIco, func(data []byte) (string, error) {
+		if err := vfs.Load(`/favicon.ico`, *flags.FaviconIco, func(data []byte) (string, error) {
 			image, format, err := image.Decode(bytes.NewBuffer(data))
 			if err != nil {
 				return ``, err
@@ -273,7 +280,7 @@ func main() {
 		}
 	}
 	if *flags.RobotsTxt != `` {
-		if err := vfs.FromFile(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
+		if err := vfs.Load(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
 			logger.Info(`vfs.load robots.txt %s %d`, *flags.RobotsTxt, len(data))
 			return `text/plain`, nil
 		}); err != nil {
@@ -302,11 +309,11 @@ func main() {
 				root := http.Handler(http.HandlerFunc(handler.Cocytus))
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
-					root = middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index))(root)
+					root = middleware.NewFs(ofs)(root)
 				}
 				if vfs.Len() > 0 {
 					features = append(features, `vfs`)
-					root = middleware.NewFilesystem(middleware.NewVFSDriver(vfs))(root)
+					root = middleware.NewFs(vfs)(root)
 				}
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.Prometheus {
@@ -375,11 +382,11 @@ func main() {
 				root := http.Handler(http.HandlerFunc(handler.Cocytus))
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
-					root = middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index))(root)
+					root = middleware.NewFs(ofs)(root)
 				}
 				if vfs.Len() > 0 {
 					features = append(features, `vfs`)
-					root = middleware.NewFilesystem(middleware.NewVFSDriver(vfs))(root)
+					root = middleware.NewFs(vfs)(root)
 				}
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.Prometheus {
