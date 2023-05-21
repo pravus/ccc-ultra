@@ -20,8 +20,8 @@ exec /usr/bin/docker run "$@" \
     -https=:8443 \
     -https-tls-cert=/tls/cert \
     -https-tls-key=/tls/key \
-    -reverse-proxy /g=http://ccc-grafana:3000 \
-    -reverse-proxy /yt=http://ccc-youtrack:8080 \
-    -root=/www/index.html \
-    -favicon-ico=/www/favicon.ico \
-    -prometheus
+    -prometheus \
+    -reverse-proxy-tls /g=http://ccc-grafana:3000 \
+    -reverse-proxy-tls /yt=http://ccc-youtrack:8080 \
+    -root=/www \
+    -ez

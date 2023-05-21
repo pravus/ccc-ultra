@@ -141,7 +141,7 @@ func (entry LogEntry) Write(code int, written int, header http.Header, elapsed t
 			return
 		}
 	}
-	entry.logger.Log(`serve`, `%-5s %s %d %-7s %-21s bytes=%d elapsed=%s %s`,
+	entry.logger.Log(`serve`, `%-5s %s %d %-7s %-21s %9d %15s %s`,
 		entry.label, middleware.GetReqID(req.Context()), code, req.Method, req.RemoteAddr, written, elapsed.String(), req.RequestURI)
 }
 

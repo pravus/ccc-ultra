@@ -35,6 +35,7 @@ type Flags struct {
 	Ctrl               *string
 	CtrlLogger         *bool
 	ctrlEnabled        bool
+	Ez                 *bool
 	FaviconIco         *string
 	Hostname           *string
 	Http               *string
@@ -49,6 +50,7 @@ type Flags struct {
 	ofsEnabled         bool
 	Prometheus         *bool
 	ReverseProxies     ReverseProxiesFlag
+	ReverseProxiesTls  ReverseProxiesFlag
 	ReverseProxyLogger *bool
 	TimeoutIdle        *time.Duration
 	TimeoutRead        *time.Duration
@@ -101,7 +103,6 @@ const (
 	envBearerToken = `ULTRA_BEARER_TOKEN`
 )
 const (
-	defCtrlAddress = `localhost:8448`
 	envCtrlAddress = `ULTRA_CTRL`
 )
 const (
@@ -130,6 +131,7 @@ func main() {
 		Compression:        flag.Int(`compression`, 5, `specifies the compression level`),
 		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
 		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
+		Ez:                 flag.Bool(`ez`, false, `auto loads the index, favicon.ico, and robots.txt from the root`),
 		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Hostname:           flag.String(`hostname`, hostname, `specifies the hostname`),
 		Http:               flag.String(`http`, ``, `specifies the bind address for the http service`),
@@ -150,6 +152,7 @@ func main() {
 		Root:               flag.String(`root`, `.`, `specifies the root directory`),
 	}
 	flag.Var(&flags.ReverseProxies, `reverse-proxy`, `specifies a reverse proxy`)
+	flag.Var(&flags.ReverseProxiesTls, `reverse-proxy-tls`, `specifies a tls reverse proxy`)
 	flag.Parse()
 
 	// env
@@ -164,12 +167,12 @@ func main() {
 		}
 
 		flags.BearerToken = first(*flags.BearerToken, os.Getenv(envBearerToken))
-		flags.Ctrl = first(*flags.Ctrl, os.Getenv(envCtrlAddress), defCtrlAddress)
+		flags.Ctrl = first(*flags.Ctrl, os.Getenv(envCtrlAddress))
 		flags.Http = first(*flags.Http, os.Getenv(envHttpAddress), defHttpAddress)
 		flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
 	}
 
-	// validate
+	// inspect
 	flags.ctrlEnabled = flags.Ctrl != nil && *flags.Ctrl != ``
 	flags.httpEnabled = flags.Http != nil && *flags.Http != ``
 	flags.httpsEnabled = flags.Https != nil && *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
@@ -187,34 +190,18 @@ func main() {
 		if !flags.httpsEnabled {
 			logger.Fatal(`-https-only requires https to be enabled`)
 		}
+		if len(flags.ReverseProxies) > 0 {
+			logger.Fatal(`-reverse-proxy cannot be used with -https-only`)
+		}
+	}
+	if len(flags.ReverseProxiesTls) > 0 {
+		if !flags.httpsEnabled {
+			logger.Fatal(`-reverse-proxy-tls requires https to be enabled`)
+		}
 	}
 
 	//vfs
-	// FIXME: add flag to just auto load favicon, index.html, robots.txt from cwd (-manifest)
 	vfs := volatile.NewFs()
-	if *flags.FaviconIco != `` {
-		if err := vfs.FromFile(`/favicon.ico`, *flags.FaviconIco, func(data []byte) (string, error) {
-			image, format, err := image.Decode(bytes.NewBuffer(data))
-			if err != nil {
-				return ``, err
-			}
-			bounds := image.Bounds()
-			height := bounds.Max.Y - bounds.Min.Y
-			width := bounds.Max.X - bounds.Min.X
-			logger.Info(`load favicon.ico %s %d (%dx%d; %s)`, *flags.FaviconIco, len(data), width, height, format)
-			return `image/` + format, nil
-		}); err != nil {
-			logger.Fatal(`load error: %s`, err)
-		}
-	}
-	if *flags.RobotsTxt != `` {
-		if err := vfs.FromFile(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
-			logger.Info(`load robots.txt %s %d`, *flags.RobotsTxt, len(data))
-			return `text/plain`, nil
-		}); err != nil {
-			logger.Fatal(`load error: %s`, err)
-		}
-	}
 
 	// root
 	if *flags.Root == `.` {
@@ -240,50 +227,105 @@ func main() {
 		}
 	}
 
+	// other
+	if *flags.Ez {
+		if err := vfs.FromFile(`/`, *flags.Index, func(data []byte) (string, error) {
+			logger.Info(`load root %s %d`, *flags.Index, len(data))
+			return `text/html`, nil
+		}); err != nil {
+			logger.Fatal(`load error: %s`, err)
+		}
+		ptr := func(source string) *string {
+			return &source
+		}
+		if *flags.FaviconIco == `` {
+			if _, err := os.Stat(`favicon.ico`); err != nil {
+				if !os.IsNotExist(err) {
+					logger.Fatal(`stat error: %s`, err)
+				}
+			} else {
+				flags.FaviconIco = ptr(`favicon.ico`)
+			}
+		}
+		if *flags.RobotsTxt == `` {
+			if _, err := os.Stat(`robots.txt`); err != nil {
+				if !os.IsNotExist(err) {
+					logger.Fatal(`stat error: %s`, err)
+				}
+			} else {
+				flags.RobotsTxt = ptr(`robots.txt`)
+			}
+		}
+	}
+	if *flags.FaviconIco != `` {
+		if err := vfs.FromFile(`/favicon.ico`, *flags.FaviconIco, func(data []byte) (string, error) {
+			image, format, err := image.Decode(bytes.NewBuffer(data))
+			if err != nil {
+				return ``, err
+			}
+			bounds := image.Bounds()
+			height := bounds.Max.Y - bounds.Min.Y
+			width := bounds.Max.X - bounds.Min.X
+			logger.Info(`load favicon.ico %s %d (%dx%d; %s)`, *flags.FaviconIco, len(data), width, height, format)
+			return `image/` + format, nil
+		}); err != nil {
+			logger.Fatal(`load error: %s`, err)
+		}
+	}
+	if *flags.RobotsTxt != `` {
+		if err := vfs.FromFile(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
+			logger.Info(`load robots.txt %s %d`, *flags.RobotsTxt, len(data))
+			return `text/plain`, nil
+		}); err != nil {
+			logger.Fatal(`load error: %s`, err)
+		}
+	}
+
 	// services
 	var services Services
 
 	// http
 	if flags.httpEnabled {
+		label := `http`
+		scheme := `http`
 		features := []string{}
-		router := chi.NewRouter().With(middleware.Always(volatile.NewLogFormatter(`http`, logger), *flags.TimeoutRequest, *flags.Compression)...)
-		if *flags.Prometheus {
-			router.Use(middleware.Prometheus(`http`))
-			features = append(features, `prometheus`)
-		}
-		if vfs.Len() > 0 {
-			router.Use(middleware.NewFilesystem(middleware.NewVFSDriver(vfs)))
-			features = append(features, `vfs`)
-		}
-		if flags.ofsEnabled {
-			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
-			features = append(features, `ofs`)
-		}
-		var root http.Handler
-		if *flags.HttpsOnly {
-			root = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set(`Connection`, `close`)
-				// FIXME: need a solid url generator
-				http.Redirect(w, r, `https://`+r.Host+r.URL.String(), http.StatusMovedPermanently)
-			})
-			features = append(features, `https-only`)
-		} else {
-			root = http.HandlerFunc(handler.Cocytus)
-		}
-		router.Mount(`/`, root)
-		if len(flags.ReverseProxies) > 0 {
-			for _, proxy := range flags.ReverseProxies {
-				router.Mount(proxy.Mount, httputil.NewSingleHostReverseProxy(proxy.Url))
-				if !*flags.ReverseProxyLogger {
-					logger.Trim(proxy.Mount)
-				}
-				logger.Info(`http.mount reverse-proxy %s %s`, proxy.Mount, proxy.Url)
-			}
-			features = append(features, `reverse-proxy`)
-		}
+		formatter := volatile.NewLogFormatter(label, logger)
+		router := chi.NewRouter()
 		router.NotFound(http.HandlerFunc(handler.Cocytus))
+		router.Mount(`/`, func() http.Handler {
+			if *flags.HttpsOnly {
+				features = append(features, `https-only`)
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set(`Connection`, `close`)
+					// FIXME: need a solid url generator
+					http.Redirect(w, r, `https://`+r.Host+r.URL.String(), http.StatusMovedPermanently)
+				})
+			}
+			root := http.Handler(http.HandlerFunc(handler.Cocytus))
+			if flags.ofsEnabled {
+				features = append(features, `ofs`)
+				root = middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index))(root)
+			}
+			if vfs.Len() > 0 {
+				features = append(features, `vfs`)
+				root = middleware.NewFilesystem(middleware.NewVFSDriver(vfs))(root)
+			}
+			if *flags.Prometheus {
+				features = append(features, `prometheus`)
+				root = middleware.Prometheus(label)(root)
+			}
+			return middleware.Standard(root, true, formatter, *flags.TimeoutRequest, *flags.Compression)
+		}())
+		if len(flags.ReverseProxies) > 0 {
+			features = append(features, `reverse-proxy`)
+			for _, proxy := range flags.ReverseProxies {
+				handler := httputil.NewSingleHostReverseProxy(proxy.Url)
+				router.Mount(proxy.Mount, middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter))
+				logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
+			}
+		}
 		sort.Strings(features)
-		services = append(services, Service{label: `http`, scheme: `http`, features: features, server: &http.Server{
+		services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
 			Addr:         *flags.Http,
 			Handler:      router,
 			IdleTimeout:  *flags.TimeoutIdle,
@@ -296,7 +338,10 @@ func main() {
 
 	// https
 	if flags.httpsEnabled {
+		label := `https`
+		scheme := `https`
 		features := []string{`tls`}
+		formatter := volatile.NewLogFormatter(label, logger)
 		cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
 		if err != nil {
 			logger.Fatal(`load key pair: error: %s`, err)
@@ -318,35 +363,34 @@ func main() {
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			},
 		}
-		router := chi.NewRouter().With(middleware.Always(volatile.NewLogFormatter(`https`, logger), *flags.TimeoutRequest, *flags.Compression)...)
-		if *flags.Prometheus {
-			router.Use(middleware.Prometheus(`https`))
-			features = append(features, `prometheus`)
-		}
-		if vfs.Len() > 0 {
-			router.Use(middleware.NewFilesystem(middleware.NewVFSDriver(vfs)))
-			features = append(features, `vfs`)
-		}
-		if flags.ofsEnabled {
-			router.Use(middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index)))
-			features = append(features, `ofs`)
-		}
-		var root http.Handler
-		root = http.HandlerFunc(handler.Cocytus)
-		router.Mount(`/`, root)
-		if len(flags.ReverseProxies) > 0 {
-			for _, proxy := range flags.ReverseProxies {
-				router.Mount(proxy.Mount, httputil.NewSingleHostReverseProxy(proxy.Url))
-				if !*flags.ReverseProxyLogger {
-					logger.Trim(proxy.Mount)
-				}
-				logger.Info(`https.mount reverse-proxy %s %s`, proxy.Mount, proxy.Url)
-			}
-			features = append(features, `reverse-proxy`)
-		}
+		router := chi.NewRouter()
 		router.NotFound(http.HandlerFunc(handler.Cocytus))
+		router.Mount(`/`, func() http.Handler {
+			root := http.Handler(http.HandlerFunc(handler.Cocytus))
+			if flags.ofsEnabled {
+				features = append(features, `ofs`)
+				root = middleware.NewFilesystem(middleware.NewOFSDriver(*flags.Index))(root)
+			}
+			if vfs.Len() > 0 {
+				features = append(features, `vfs`)
+				root = middleware.NewFilesystem(middleware.NewVFSDriver(vfs))(root)
+			}
+			if *flags.Prometheus {
+				features = append(features, `prometheus`)
+				root = middleware.Prometheus(label)(root)
+			}
+			return middleware.Standard(root, true, formatter, *flags.TimeoutRequest, *flags.Compression)
+		}())
+		if len(flags.ReverseProxiesTls) > 0 {
+			features = append(features, `reverse-proxy`)
+			for _, proxy := range flags.ReverseProxiesTls {
+				handler := httputil.NewSingleHostReverseProxy(proxy.Url)
+				router.Mount(proxy.Mount, middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter))
+				logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
+			}
+		}
 		sort.Strings(features)
-		services = append(services, Service{label: `https`, scheme: `https`, features: features, server: &http.Server{
+		services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
 			Addr:         *flags.Https,
 			Handler:      router,
 			TLSConfig:    tlsConfig,
@@ -360,25 +404,32 @@ func main() {
 
 	// ctrl
 	if flags.ctrlEnabled {
+		label := `ctrl`
+		scheme := `http`
 		features := []string{}
+		formatter := volatile.NewLogFormatter(label, logger)
 		router := chi.NewRouter()
-		if flags.BearerToken != nil && *flags.BearerToken != `` {
-			router.Use(middleware.Bearer(*flags.BearerToken))
-			features = append(features, `bearer`)
-		}
-		router.Use(middleware.Control(*flags.CtrlLogger)...)
-		if *flags.Prometheus {
-			router.Use(middleware.Prometheus(`ctrl`))
-			features = append(features, `prometheus`)
-		}
+		router.NotFound(http.HandlerFunc(handler.Cocytus))
+		router.Mount(`/`, func() http.Handler {
+			root := http.Handler(http.HandlerFunc(handler.Cocytus))
+			if flags.BearerToken != nil && *flags.BearerToken != `` {
+				features = append(features, `bearer`)
+				root = middleware.Bearer(*flags.BearerToken)(root)
+			}
+			if *flags.Prometheus {
+				features = append(features, `prometheus`)
+				root = middleware.Prometheus(label)(root)
+			}
+			return middleware.Control(root, *flags.CtrlLogger, formatter)
+		}())
 		router.Route(`/metrics`, func(router chi.Router) {
 			if *flags.Prometheus {
-				router.Mount(`/prometheus`, promhttp.Handler())
+				handler := promhttp.Handler()
+				router.Mount(`/prometheus`, middleware.Control(handler, *flags.CtrlLogger, formatter))
 			}
 		})
-		router.NotFound(http.HandlerFunc(handler.Cocytus))
 		sort.Strings(features)
-		services = append(services, Service{label: `ctrl`, scheme: `http`, features: features, server: &http.Server{
+		services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
 			Addr:         *flags.Ctrl,
 			Handler:      router,
 			IdleTimeout:  *flags.TimeoutIdle,
