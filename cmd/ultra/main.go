@@ -30,32 +30,33 @@ import (
 )
 
 type Flags struct {
-	BearerToken     *string
-	Compression     *int
-	Ctrl            *string
-	CtrlLogger      *bool
-	ctrlEnabled     bool
-	FaviconIco      *string
-	Hostname        *string
-	Http            *string
-	httpEnabled     bool
-	Https           *string
-	httpsEnabled    bool
-	HttpsOnly       *bool
-	HttpsTlsCert    *string
-	HttpsTlsKey     *string
-	Index           *string
-	LogLevel        *string
-	ofsEnabled      bool
-	Prometheus      *bool
-	ReverseProxies  ReverseProxiesFlag
-	TimeoutIdle     *time.Duration
-	TimeoutRead     *time.Duration
-	TimeoutRequest  *time.Duration
-	TimeoutShutdown *time.Duration
-	TimeoutWrite    *time.Duration
-	RobotsTxt       *string
-	Root            *string
+	BearerToken        *string
+	Compression        *int
+	Ctrl               *string
+	CtrlLogger         *bool
+	ctrlEnabled        bool
+	FaviconIco         *string
+	Hostname           *string
+	Http               *string
+	httpEnabled        bool
+	Https              *string
+	httpsEnabled       bool
+	HttpsOnly          *bool
+	HttpsTlsCert       *string
+	HttpsTlsKey        *string
+	Index              *string
+	LogLevel           *string
+	ofsEnabled         bool
+	Prometheus         *bool
+	ReverseProxies     ReverseProxiesFlag
+	ReverseProxyLogger *bool
+	TimeoutIdle        *time.Duration
+	TimeoutRead        *time.Duration
+	TimeoutRequest     *time.Duration
+	TimeoutShutdown    *time.Duration
+	TimeoutWrite       *time.Duration
+	RobotsTxt          *string
+	Root               *string
 }
 
 type ReverseProxy struct {
@@ -125,27 +126,28 @@ func main() {
 
 	// flags
 	flags := Flags{
-		BearerToken:     flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
-		Compression:     flag.Int(`compression`, 5, `specifies the compression level`),
-		Ctrl:            flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
-		CtrlLogger:      flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
-		FaviconIco:      flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
-		Hostname:        flag.String(`hostname`, hostname, `specifies the hostname`),
-		Http:            flag.String(`http`, ``, `specifies the bind address for the http service`),
-		Https:           flag.String(`https`, ``, `specifies the bind address for the https service`),
-		HttpsOnly:       flag.Bool(`https-only`, false, `http requests will be redirected to the https server`),
-		HttpsTlsCert:    flag.String(`https-tls-cert`, ``, `specifies the location of the server tls certificate`),
-		HttpsTlsKey:     flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
-		Index:           flag.String(`index`, `index.html`, `specifies the name of the default index file`),
-		LogLevel:        flag.String(`log-level`, `info`, `specifies the logging level`),
-		Prometheus:      flag.Bool(`prometheus`, false, `enable prometheus`),
-		TimeoutIdle:     flag.Duration(`timeout-idle`, 5*time.Second, `specifies the request idle timeout duration`),
-		TimeoutRead:     flag.Duration(`timeout-read`, 10*time.Second, `specifies the request read timeout duration`),
-		TimeoutRequest:  flag.Duration(`timeout-request`, 60*time.Second, `specifies the request timeout duration`),
-		TimeoutShutdown: flag.Duration(`timeout-shutdown`, 5*time.Second, `specifies the shutdown timeout`),
-		TimeoutWrite:    flag.Duration(`timeout-write`, 60*time.Second, `specifies the request write timeout duration`),
-		RobotsTxt:       flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
-		Root:            flag.String(`root`, `.`, `specifies the root directory`),
+		BearerToken:        flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
+		Compression:        flag.Int(`compression`, 5, `specifies the compression level`),
+		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
+		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
+		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
+		Hostname:           flag.String(`hostname`, hostname, `specifies the hostname`),
+		Http:               flag.String(`http`, ``, `specifies the bind address for the http service`),
+		Https:              flag.String(`https`, ``, `specifies the bind address for the https service`),
+		HttpsOnly:          flag.Bool(`https-only`, false, `http requests will be redirected to the https server`),
+		HttpsTlsCert:       flag.String(`https-tls-cert`, ``, `specifies the location of the server tls certificate`),
+		HttpsTlsKey:        flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
+		Index:              flag.String(`index`, `index.html`, `specifies the name of the default index file`),
+		LogLevel:           flag.String(`log-level`, `info`, `specifies the logging level`),
+		Prometheus:         flag.Bool(`prometheus`, false, `enable prometheus`),
+		TimeoutIdle:        flag.Duration(`timeout-idle`, 5*time.Second, `specifies the request idle timeout duration`),
+		TimeoutRead:        flag.Duration(`timeout-read`, 10*time.Second, `specifies the request read timeout duration`),
+		TimeoutRequest:     flag.Duration(`timeout-request`, 60*time.Second, `specifies the request timeout duration`),
+		TimeoutShutdown:    flag.Duration(`timeout-shutdown`, 5*time.Second, `specifies the shutdown timeout`),
+		TimeoutWrite:       flag.Duration(`timeout-write`, 60*time.Second, `specifies the response write timeout duration`),
+		ReverseProxyLogger: flag.Bool(`reverse-proxy-logger`, false, `enables logging for reverse proxies`),
+		RobotsTxt:          flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
+		Root:               flag.String(`root`, `.`, `specifies the root directory`),
 	}
 	flag.Var(&flags.ReverseProxies, `reverse-proxy`, `specifies a reverse proxy`)
 	flag.Parse()
@@ -272,6 +274,9 @@ func main() {
 		if len(flags.ReverseProxies) > 0 {
 			for _, proxy := range flags.ReverseProxies {
 				router.Mount(proxy.Mount, httputil.NewSingleHostReverseProxy(proxy.Url))
+				if !*flags.ReverseProxyLogger {
+					logger.Trim(proxy.Mount)
+				}
 				logger.Info(`http.mount reverse-proxy %s %s`, proxy.Mount, proxy.Url)
 			}
 			features = append(features, `reverse-proxy`)
@@ -332,6 +337,9 @@ func main() {
 		if len(flags.ReverseProxies) > 0 {
 			for _, proxy := range flags.ReverseProxies {
 				router.Mount(proxy.Mount, httputil.NewSingleHostReverseProxy(proxy.Url))
+				if !*flags.ReverseProxyLogger {
+					logger.Trim(proxy.Mount)
+				}
 				logger.Info(`https.mount reverse-proxy %s %s`, proxy.Mount, proxy.Url)
 			}
 			features = append(features, `reverse-proxy`)

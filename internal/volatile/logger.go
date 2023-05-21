@@ -23,12 +23,14 @@ const (
 )
 
 type Logger struct {
-	level LogLevel
+	level    LogLevel
+	prefixes []string
 }
 
 func NewLogger(level LogLevel) *Logger {
 	logger := &Logger{
-		level: level,
+		level:    level,
+		prefixes: []string{},
 	}
 	return logger
 }
@@ -39,6 +41,10 @@ func (logger Logger) Log(level string, format string, args ...any) {
 
 func (logger *Logger) SetLevel(level LogLevel) {
 	logger.level = level
+}
+
+func (logger *Logger) Trim(prefix string) {
+	logger.prefixes = append(logger.prefixes, prefix)
 }
 
 func (logger *Logger) SetLevelFromString(want string) error {
@@ -130,6 +136,11 @@ var _ middleware.LogEntry = (*LogEntry)(nil)
 
 func (entry LogEntry) Write(code int, written int, header http.Header, elapsed time.Duration, extra any) {
 	req := entry.request
+	for _, prefix := range entry.logger.prefixes {
+		if strings.HasPrefix(req.RequestURI, prefix) {
+			return
+		}
+	}
 	entry.logger.Log(`serve`, `%-5s %s %d %-7s %-21s bytes=%d elapsed=%s %s`,
 		entry.label, middleware.GetReqID(req.Context()), code, req.Method, req.RemoteAddr, written, elapsed.String(), req.RequestURI)
 }
