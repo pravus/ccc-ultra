@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -43,6 +42,7 @@ type Flags struct {
 	HttpsTlsCert    *string
 	HttpsTlsKey     *string
 	Index           *string
+	LogLevel        *string
 	ofsEnabled      bool
 	Prometheus      *bool
 	TimeoutIdle     *time.Duration
@@ -80,12 +80,15 @@ const (
 )
 
 func main() {
+	// logger
+	logger := volatile.NewLogger(volatile.LogLevelInfo)
+
 	// boot
 	hostname, err := os.Hostname()
 	if err != nil {
-		fatal(`hostname: error: %s`, err)
+		logger.Fatal(`hostname: error: %s`, err)
 	}
-	fmt.Println(`ultra ` + hostname)
+	logger.Info(`ultra %s`, hostname)
 
 	// flags
 	flags := Flags{
@@ -101,6 +104,7 @@ func main() {
 		HttpsTlsCert:    flag.String(`https-tls-cert`, ``, `specifies the location of the server tls certificate`),
 		HttpsTlsKey:     flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
 		Index:           flag.String(`index`, `index.html`, `specifies the name of the default index file`),
+		LogLevel:        flag.String(`log-level`, `info`, `specifies the logging level`),
 		Prometheus:      flag.Bool(`prometheus`, false, `enable prometheus`),
 		TimeoutIdle:     flag.Duration(`timeout-idle`, 5*time.Second, `specifies the request idle timeout duration`),
 		TimeoutRead:     flag.Duration(`timeout-read`, 10*time.Second, `specifies the request read timeout duration`),
@@ -111,8 +115,6 @@ func main() {
 		Root:            flag.String(`root`, `.`, `specifies the root directory`),
 	}
 	flag.Parse()
-
-	// FIXME: initialize logger
 
 	// env
 	{
@@ -136,12 +138,18 @@ func main() {
 	flags.httpEnabled = flags.Http != nil && *flags.Http != ``
 	flags.httpsEnabled = flags.Https != nil && *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
 
+	// validate
+	if *flags.LogLevel != `` {
+		if err := logger.SetLevelFromString(*flags.LogLevel); err != nil {
+			logger.Fatal(`log level error: %s`, err)
+		}
+	}
 	if *flags.Root == `` {
-		fatal(`-root must not be empty`)
+		logger.Fatal(`-root must not be empty`)
 	}
 	if *flags.HttpsOnly {
 		if !flags.httpsEnabled {
-			fatal(`-https-only requires https to be enabled`)
+			logger.Fatal(`-https-only requires https to be enabled`)
 		}
 	}
 
@@ -157,18 +165,18 @@ func main() {
 			bounds := image.Bounds()
 			height := bounds.Max.Y - bounds.Min.Y
 			width := bounds.Max.X - bounds.Min.X
-			fmt.Printf("load favicon.ico %s %d (%dx%d; %s)\n", *flags.FaviconIco, len(data), width, height, format)
+			logger.Info(`load favicon.ico %s %d (%dx%d; %s)`, *flags.FaviconIco, len(data), width, height, format)
 			return `image/` + format, nil
 		}); err != nil {
-			fatal(`load error: %s`, err)
+			logger.Fatal(`load error: %s`, err)
 		}
 	}
 	if *flags.RobotsTxt != `` {
 		if err := vfs.FromFile(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
-			fmt.Printf("load robots.txt %s %d\n", *flags.RobotsTxt, len(data))
+			logger.Info(`load robots.txt %s %d`, *flags.RobotsTxt, len(data))
 			return `text/plain`, nil
 		}); err != nil {
-			fatal(`load error: %s`, err)
+			logger.Fatal(`load error: %s`, err)
 		}
 	}
 
@@ -178,20 +186,20 @@ func main() {
 	} else {
 		info, err := os.Stat(*flags.Root)
 		if err != nil {
-			fatal(`stat error: %s`, err)
+			logger.Fatal(`stat error: %s`, err)
 		}
 		if info.IsDir() {
 			if err := os.Chdir(*flags.Root); err != nil {
-				fatal(`chdir error: %s`, err)
+				logger.Fatal(`chdir error: %s`, err)
 			}
 			flags.ofsEnabled = true
-			fmt.Printf("chdir %s\n", *flags.Root)
+			logger.Info(`chdir %s`, *flags.Root)
 		} else {
 			if err := vfs.FromFile(`/`, *flags.Root, func(data []byte) (string, error) {
-				fmt.Printf("load root %s %d\n", *flags.Root, len(data))
+				logger.Info(`load root %s %d`, *flags.Root, len(data))
 				return `text/html`, nil
 			}); err != nil {
-				fatal(`load error: %s`, err)
+				logger.Fatal(`load error: %s`, err)
 			}
 		}
 	}
@@ -202,7 +210,7 @@ func main() {
 	// http
 	if flags.httpEnabled {
 		features := []string{}
-		router := chi.NewRouter().With(middleware.Always(*flags.TimeoutRequest, *flags.Compression)...)
+		router := chi.NewRouter().With(middleware.Always(volatile.NewLogFormatter(`http`, logger), *flags.TimeoutRequest, *flags.Compression)...)
 		if *flags.Prometheus {
 			router.Use(middleware.Prometheus(`http`))
 			features = append(features, `prometheus`)
@@ -237,7 +245,7 @@ func main() {
 			WriteTimeout: *flags.TimeoutWrite,
 		}})
 	} else {
-		fmt.Printf("http.disabled\n")
+		logger.Info(`http.disabled`)
 	}
 
 	// https
@@ -245,7 +253,7 @@ func main() {
 		features := []string{`tls`}
 		cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
 		if err != nil {
-			fatal(`load key pair: error: %s`, err)
+			logger.Fatal(`load key pair: error: %s`, err)
 		}
 		tlsConfig := &tls.Config{
 			MinVersion:               tls.VersionTLS12,
@@ -264,7 +272,7 @@ func main() {
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			},
 		}
-		router := chi.NewRouter().With(middleware.Always(*flags.TimeoutRequest, *flags.Compression)...)
+		router := chi.NewRouter().With(middleware.Always(volatile.NewLogFormatter(`https`, logger), *flags.TimeoutRequest, *flags.Compression)...)
 		if *flags.Prometheus {
 			router.Use(middleware.Prometheus(`https`))
 			features = append(features, `prometheus`)
@@ -291,7 +299,7 @@ func main() {
 			WriteTimeout: *flags.TimeoutWrite,
 		}})
 	} else {
-		fmt.Printf("https.disabled\n")
+		logger.Info(`https.disabled`)
 	}
 
 	// ctrl
@@ -322,7 +330,7 @@ func main() {
 			WriteTimeout: *flags.TimeoutWrite,
 		}})
 	} else {
-		fmt.Printf("ctrl.disabled\n")
+		logger.Info(`ctrl.disabled`)
 	}
 
 	// start
@@ -331,13 +339,13 @@ func main() {
 		go func() {
 			connect := service.server.Addr
 			if strings.IndexRune(connect, ':') == 0 {
-				connect = fmt.Sprintf(`%s%s`, hostname, connect)
+				connect = hostname + connect
 			}
 			features := ``
 			if len(service.features) > 0 {
 				features = ` ` + strings.Join(service.features, ` `)
 			}
-			fmt.Printf("%s.up %s://%s/%s\n", service.label, service.scheme, connect, features)
+			logger.Info(`%s.up %s://%s/%s`, service.label, service.scheme, connect, features)
 			var err error
 			if service.server.TLSConfig == nil {
 				err = service.server.ListenAndServe()
@@ -345,9 +353,9 @@ func main() {
 				err = service.server.ListenAndServeTLS(``, ``)
 			}
 			if err != nil && err != http.ErrServerClosed {
-				fmt.Printf("%s.serve error: %s\n", service.label, err)
+				logger.Error(`%s.serve error: %s`, service.label, err)
 			} else {
-				fmt.Printf("%s.down\n", service.label)
+				logger.Info(`%s.down`, service.label)
 			}
 		}()
 	}
@@ -367,15 +375,10 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), *flags.TimeoutShutdown)
 			defer cancel()
 			if err := service.server.Shutdown(ctx); err != nil {
-				fmt.Printf("%s.shutdown error: %s\n", service.label, err)
+				logger.Error(`%s.shutdown error: %s`, service.label, err)
 			}
 			wg.Done()
 		}()
 	}
 	wg.Wait()
-}
-
-func fatal(format string, args ...any) {
-	fmt.Printf(format+"\n", args...)
-	os.Exit(1)
 }
