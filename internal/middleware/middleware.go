@@ -7,21 +7,15 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// FIXME: move stuff like prometheus and bearer token in here?
-
-func Standard(handler http.Handler, withLogger bool, logger middleware.LogFormatter, timeout time.Duration, compress int) http.Handler {
+func Standard(label string, handler http.Handler, logger middleware.LogFormatter, timeout time.Duration, compress int) http.Handler {
 	wares := []func(http.Handler) http.Handler{
 		middleware.Recoverer,
-	}
-	if withLogger {
-		wares = append(wares, middleware.RequestLogger(logger))
-	}
-	wares = append(wares, []func(http.Handler) http.Handler{
+		middleware.RequestLogger(logger),
 		middleware.RealIP,
 		middleware.RequestID,
 		middleware.CleanPath,
 		middleware.Timeout(timeout),
-	}...)
+	}
 	if compress >= 0 {
 		wares = append(wares, middleware.Compress(compress))
 	}
