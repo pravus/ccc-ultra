@@ -66,5 +66,5 @@ func (wand FsWand) Zap(name string) string {
 			return mimeType
 		}
 	}
-	return `application/octet-stream`
+	return `text/plain`
 }

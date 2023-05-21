@@ -53,6 +53,8 @@ type Flags struct {
 	ctrlEnabled        bool
 	Ez                 *bool
 	FaviconIco         *string
+	Home               *string
+	HomeDir            *string
 	Hostname           *string
 	Http               *string
 	httpEnabled        bool
@@ -134,6 +136,8 @@ func main() {
 		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
 		Ez:                 flag.Bool(`ez`, false, `auto loads the index, favicon.ico, and robots.txt from the root`),
 		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
+		Home:               flag.String(`home`, ``, `specifies the root directory for user homes`),
+		HomeDir:            flag.String(`home-dir`, `public_html`, `specifies the public directory for user homes`),
 		Hostname:           flag.String(`hostname`, hostname, `specifies the hostname`),
 		Http:               flag.String(`http`, ``, `specifies the bind address for the http service`),
 		Https:              flag.String(`https`, ``, `specifies the bind address for the https service`),
@@ -322,6 +326,20 @@ func main() {
 				}
 				return root
 			}())
+			if *flags.Home != `` {
+				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
+				features = append(features, `home`)
+				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
+				router.Route(`/@{user}`, func(router chi.Router) {
+					root := http.Handler(http.HandlerFunc(handler.Cocytus))
+					root = middleware.NewHome(hfs, *flags.HomeDir)(root)
+					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
+					if *flags.Prometheus {
+						root = metrics(root)
+					}
+					router.Mount(`/`, root)
+				})
+			}
 			if len(flags.ReverseProxies) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
@@ -395,6 +413,20 @@ func main() {
 				}
 				return root
 			}())
+			if *flags.Home != `` {
+				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
+				features = append(features, `home`)
+				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
+				router.Route(`/@{user}`, func(router chi.Router) {
+					root := http.Handler(http.HandlerFunc(handler.Cocytus))
+					root = middleware.NewHome(hfs, *flags.HomeDir)(root)
+					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
+					if *flags.Prometheus {
+						root = metrics(root)
+					}
+					router.Mount(`/`, root)
+				})
+			}
 			if len(flags.ReverseProxiesTls) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxiesTls {

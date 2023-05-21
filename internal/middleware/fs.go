@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"ultra/internal/model"
 )
 
@@ -37,6 +39,9 @@ func NewFs(driver model.FsDriver) func(http.Handler) http.Handler {
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
+			if index := strings.Index(path, `?`); index >= 0 {
+				path = path[:index]
+			}
 			node, err := driver.Get(path)
 			if err != nil {
 				fmt.Printf("driver error: %s\n", err)
@@ -44,6 +49,41 @@ func NewFs(driver model.FsDriver) func(http.Handler) http.Handler {
 				return
 			}
 			publish(path, node, next, w, r)
+		})
+	}
+}
+
+func NewHome(driver model.FsDriver, public string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := chi.URLParam(r, `user`)
+			if user == `` {
+				next.ServeHTTP(w, r)
+				return
+			}
+			path, err := url.PathUnescape(r.URL.String())
+			if err != nil {
+				fmt.Printf("unescape error: %s\n", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			if index := strings.Index(path, user); index >= 0 {
+				path = path[index+len(user):]
+			}
+			if index := strings.Index(path, `?`); index >= 0 {
+				path = path[:index]
+			}
+			if path != `` && path[0] == '/' {
+				path = path[1:]
+			}
+			target := `/` + user + `/` + public + `/` + path
+			node, err := driver.Get(target)
+			if err != nil {
+				fmt.Printf("driver error: %s\n", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			publish(`/@`+user+`/`+path, node, next, w, r)
 		})
 	}
 }
