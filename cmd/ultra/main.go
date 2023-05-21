@@ -5,11 +5,14 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -45,6 +48,7 @@ type Flags struct {
 	LogLevel        *string
 	ofsEnabled      bool
 	Prometheus      *bool
+	ReverseProxies  ReverseProxiesFlag
 	TimeoutIdle     *time.Duration
 	TimeoutRead     *time.Duration
 	TimeoutRequest  *time.Duration
@@ -52,6 +56,35 @@ type Flags struct {
 	TimeoutWrite    *time.Duration
 	RobotsTxt       *string
 	Root            *string
+}
+
+type ReverseProxy struct {
+	Mount string
+	Url   *url.URL
+}
+
+type ReverseProxiesFlag []ReverseProxy
+
+func (flag ReverseProxiesFlag) String() string {
+	if len(flag) <= 0 {
+		return ``
+	}
+	proxies := make([]string, len(flag))
+	for i := 0; i < len(flag); i++ {
+		proxies[i] = flag[i].Mount + `=` + flag[i].Url.String()
+	}
+	return strings.Join(proxies, `, `)
+}
+
+func (flag *ReverseProxiesFlag) Set(value string) error {
+	if index := strings.Index(value, `=`); value[0] != '/' || index < 1 || len(value[index+1:]) <= 0 {
+		return fmt.Errorf(`invalid reverse proxy definition "%s"`, value)
+	} else if url, err := url.Parse(value[index+1:]); err != nil {
+		return err
+	} else {
+		*flag = append(*flag, ReverseProxy{Mount: value[0:index], Url: url})
+		return nil
+	}
 }
 
 type Service struct {
@@ -114,6 +147,7 @@ func main() {
 		RobotsTxt:       flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
 		Root:            flag.String(`root`, `.`, `specifies the root directory`),
 	}
+	flag.Var(&flags.ReverseProxies, `reverse-proxy`, `specifies a reverse proxy`)
 	flag.Parse()
 
 	// env
@@ -235,6 +269,13 @@ func main() {
 			root = http.HandlerFunc(handler.Cocytus)
 		}
 		router.Mount(`/`, root)
+		if len(flags.ReverseProxies) > 0 {
+			for _, proxy := range flags.ReverseProxies {
+				router.Mount(proxy.Mount, httputil.NewSingleHostReverseProxy(proxy.Url))
+				logger.Info(`http.mount reverse-proxy %s %s`, proxy.Mount, proxy.Url)
+			}
+			features = append(features, `reverse-proxy`)
+		}
 		router.NotFound(http.HandlerFunc(handler.Cocytus))
 		sort.Strings(features)
 		services = append(services, Service{label: `http`, scheme: `http`, features: features, server: &http.Server{
@@ -288,6 +329,13 @@ func main() {
 		var root http.Handler
 		root = http.HandlerFunc(handler.Cocytus)
 		router.Mount(`/`, root)
+		if len(flags.ReverseProxies) > 0 {
+			for _, proxy := range flags.ReverseProxies {
+				router.Mount(proxy.Mount, httputil.NewSingleHostReverseProxy(proxy.Url))
+				logger.Info(`https.mount reverse-proxy %s %s`, proxy.Mount, proxy.Url)
+			}
+			features = append(features, `reverse-proxy`)
+		}
 		router.NotFound(http.HandlerFunc(handler.Cocytus))
 		sort.Strings(features)
 		services = append(services, Service{label: `https`, scheme: `https`, features: features, server: &http.Server{

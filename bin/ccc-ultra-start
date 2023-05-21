@@ -18,6 +18,8 @@ exec /usr/bin/docker run "$@" \
     -https=:8443 \
     -https-tls-cert=/tls/cert \
     -https-tls-key=/tls/key \
+    -reverse-proxy /g=www-grafana:3000 \
+    -reverse-proxy /yt=www-youtrack:8080 \
     -root=/www/index.html \
     -favicon-ico=/www/favicon.ico \
     -prometheus
