@@ -55,11 +55,13 @@ type Flags struct {
 	FaviconIco         *string
 	Home               *string
 	HomeDir            *string
+	HomePrefix         *string
 	Hostname           *string
 	Http               *string
 	httpEnabled        bool
 	Https              *string
 	httpsEnabled       bool
+	HttpsHsts          *time.Duration
 	HttpsOnly          *bool
 	HttpsTlsCert       *string
 	HttpsTlsKey        *string
@@ -138,9 +140,11 @@ func main() {
 		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Home:               flag.String(`home`, ``, `specifies the root directory for user homes`),
 		HomeDir:            flag.String(`home-dir`, `public_html`, `specifies the public directory for user homes`),
+		HomePrefix:         flag.String(`home-prefix`, `@`, `specifies the prefix to use for user homes`),
 		Hostname:           flag.String(`hostname`, hostname, `specifies the hostname`),
 		Http:               flag.String(`http`, ``, `specifies the bind address for the http service`),
 		Https:              flag.String(`https`, ``, `specifies the bind address for the https service`),
+		HttpsHsts:          flag.Duration(`https-hsts`, time.Duration(0), `specifies the value used for the max-age parameter in the HSTS header (enables -https-only)`),
 		HttpsOnly:          flag.Bool(`https-only`, false, `http requests will be redirected to the https server`),
 		HttpsTlsCert:       flag.String(`https-tls-cert`, ``, `specifies the location of the server tls certificate`),
 		HttpsTlsKey:        flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
@@ -162,25 +166,24 @@ func main() {
 
 	// env
 	{
-		first := func(list ...string) *string {
+		first := func(list ...string) string {
 			for _, value := range list {
 				if value != `` {
-					return &value
+					return value
 				}
 			}
-			return nil
+			return ``
 		}
-
-		flags.BearerToken = first(*flags.BearerToken, os.Getenv(envBearerToken))
-		flags.Ctrl = first(*flags.Ctrl, os.Getenv(envCtrlAddress))
-		flags.Http = first(*flags.Http, os.Getenv(envHttpAddress), defHttpAddress)
-		flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
+		*flags.BearerToken = first(*flags.BearerToken, os.Getenv(envBearerToken))
+		*flags.Ctrl = first(*flags.Ctrl, os.Getenv(envCtrlAddress))
+		*flags.Http = first(*flags.Http, os.Getenv(envHttpAddress), defHttpAddress)
+		*flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
 	}
 
 	// inspect
-	flags.ctrlEnabled = flags.Ctrl != nil && *flags.Ctrl != ``
-	flags.httpEnabled = flags.Http != nil && *flags.Http != ``
-	flags.httpsEnabled = flags.Https != nil && *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
+	flags.ctrlEnabled = *flags.Ctrl != ``
+	flags.httpEnabled = *flags.Http != ``
+	flags.httpsEnabled = *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
 
 	// validate
 	if *flags.LogLevel != `` {
@@ -190,6 +193,9 @@ func main() {
 	}
 	if *flags.Root == `` {
 		logger.Fatal(`-root must not be empty`)
+	}
+	if *flags.HttpsHsts > time.Duration(0) {
+		*flags.HttpsOnly = true
 	}
 	if *flags.HttpsOnly {
 		if !flags.httpsEnabled {
@@ -330,7 +336,7 @@ func main() {
 				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-				router.Route(`/@{user}`, func(router chi.Router) {
+				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
 					root := http.Handler(http.HandlerFunc(handler.Cocytus))
 					root = middleware.NewHome(hfs, *flags.HomeDir)(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
@@ -411,13 +417,17 @@ func main() {
 					features = append(features, `prometheus`)
 					root = metrics(root)
 				}
+				if *flags.HttpsHsts > time.Duration(0) {
+					features = append(features, `hsts`)
+					root = middleware.Hsts(*flags.HttpsHsts)(root)
+				}
 				return root
 			}())
 			if *flags.Home != `` {
 				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-				router.Route(`/@{user}`, func(router chi.Router) {
+				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
 					root := http.Handler(http.HandlerFunc(handler.Cocytus))
 					root = middleware.NewHome(hfs, *flags.HomeDir)(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
@@ -466,7 +476,7 @@ func main() {
 			router.Mount(`/`, func() http.Handler {
 				root := http.Handler(http.HandlerFunc(handler.Cocytus))
 				root = middleware.Control(root, *flags.CtrlLogger, formatter)
-				if flags.BearerToken != nil && *flags.BearerToken != `` {
+				if *flags.BearerToken != `` {
 					features = append(features, `bearer`)
 					root = middleware.Bearer(*flags.BearerToken)(root)
 				}
@@ -480,7 +490,7 @@ func main() {
 				if *flags.Prometheus {
 					handler := http.Handler(promhttp.Handler())
 					handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
-					if flags.BearerToken != nil && *flags.BearerToken != `` {
+					if *flags.BearerToken != `` {
 						handler = middleware.Bearer(*flags.BearerToken)(handler)
 					}
 					handler = metrics(handler)
