@@ -321,6 +321,10 @@ func main() {
 					return http.Handler(handler.Gehenna)
 				}
 				root := http.Handler(handler.Cocytus)
+				if *flags.Prometheus {
+					features = append(features, `prometheus`)
+					root = metrics(root)
+				}
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
@@ -330,10 +334,6 @@ func main() {
 					root = middleware.NewFs(vfs, logger)(root)
 				}
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
-				if *flags.Prometheus {
-					features = append(features, `prometheus`)
-					root = metrics(root)
-				}
 				return root
 			}())
 			if *flags.Home != `` {
@@ -343,10 +343,10 @@ func main() {
 				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
 					root := http.Handler(handler.Cocytus)
 					root = middleware.NewHome(hfs, *flags.HomeDir, logger)(root)
-					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					if *flags.Prometheus {
 						root = metrics(root)
 					}
+					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					router.Mount(`/`, root)
 				})
 			}
@@ -354,10 +354,10 @@ func main() {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
 					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
-					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
 					if *flags.Prometheus {
 						handler = metrics(handler)
 					}
+					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
 					router.Mount(proxy.Mount, handler)
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
 				}
@@ -434,10 +434,10 @@ func main() {
 				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
 					root := http.Handler(handler.Cocytus)
 					root = middleware.NewHome(hfs, *flags.HomeDir, logger)(root)
-					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					if *flags.Prometheus {
 						root = metrics(root)
 					}
+					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					router.Mount(`/`, root)
 				})
 			}
@@ -445,10 +445,10 @@ func main() {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxiesTls {
 					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
-					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
 					if *flags.Prometheus {
 						handler = metrics(handler)
 					}
+					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
 					router.Mount(proxy.Mount, handler)
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
 				}

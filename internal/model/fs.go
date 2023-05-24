@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"io"
 	"time"
 )
@@ -22,3 +23,5 @@ type FsDriver interface {
 type FsWand interface {
 	Zap(string) string
 }
+
+var ErrFsNotFound = errors.New(`not found`)

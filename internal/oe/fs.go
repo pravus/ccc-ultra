@@ -37,7 +37,7 @@ func (fs FsDriver) Get(path string) (model.FsNode, error) {
 	}
 	if info, err := os.Stat(target); err != nil {
 		if os.IsNotExist(err) {
-			return model.FsNode{}, nil
+			return model.FsNode{}, model.ErrFsNotFound
 		}
 		return model.FsNode{}, err
 	} else if info.IsDir() {

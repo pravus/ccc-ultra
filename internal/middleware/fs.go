@@ -45,7 +45,9 @@ func NewFs(driver model.FsDriver, logger control.Logger) func(http.Handler) http
 			}
 			node, err := driver.Get(path)
 			if err != nil {
-				logger.Warn(`driver error: %s`, err)
+				if err != model.ErrFsNotFound {
+					logger.Warn(`driver error: %s`, err)
+				}
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}

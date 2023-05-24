@@ -61,7 +61,7 @@ func (fs FsDriver) Load(target string, name string, wand func([]byte) (string, e
 
 func (fs FsDriver) Get(path string) (model.FsNode, error) {
 	if meta, ok := fs.root[path]; !ok {
-		return model.FsNode{}, fmt.Errorf(`not found`)
+		return model.FsNode{}, model.ErrFsNotFound
 	} else {
 		node := meta.node
 		node.Data = io.NopCloser(bytes.NewBuffer(meta.data))
