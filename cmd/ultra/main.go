@@ -31,6 +31,7 @@ import (
 	"ultra/internal/volatile"
 )
 
+// FIXME: add check for ez mode that root is a directory only
 // FIXME: implement CtrlTlsCert && CtrlTlsKey
 // FIXME: need some way to implement timeouts for reverse proxies
 

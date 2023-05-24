@@ -34,6 +34,8 @@ func (fs FsDriver) Len() int {
 }
 
 func (fs FsDriver) Load(target string, name string, wand func([]byte) (string, error)) error {
+	// FIXME: consider using file:// urls here and parsing the query string for info bits
+	// FIXME: consider how this error case should be handled since it is not congruent with Set()
 	if _, ok := fs.root[target]; ok {
 		return fmt.Errorf(`path "%s" already exists`, target)
 	}
@@ -51,7 +53,7 @@ func (fs FsDriver) Load(target string, name string, wand func([]byte) (string, e
 		node: model.FsNode{
 			Name:     name,
 			IsDir:    false,
-			Modified: time.Now().UTC(),
+			Modified: time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC),
 			MimeType: mimeType,
 			Size:     int64(len(data)),
 		},
