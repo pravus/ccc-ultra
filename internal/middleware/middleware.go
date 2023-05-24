@@ -25,7 +25,6 @@ func Standard(label string, handler http.Handler, logger middleware.LogFormatter
 	return handler
 }
 
-// FIXME: need to be able to configure backend timeout
 func ReverseProxy(handler http.Handler, withLogger bool, logger middleware.LogFormatter) http.Handler {
 	wares := []func(http.Handler) http.Handler{}
 	wares = append(wares, []func(http.Handler) http.Handler{
@@ -33,7 +32,6 @@ func ReverseProxy(handler http.Handler, withLogger bool, logger middleware.LogFo
 		middleware.RealIP,
 		middleware.RequestID,
 		middleware.CleanPath,
-		middleware.Timeout(60 * time.Second),
 	}...)
 	if withLogger {
 		wares = append(wares, middleware.RequestLogger(logger))

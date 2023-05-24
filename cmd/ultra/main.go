@@ -32,6 +32,7 @@ import (
 )
 
 // FIXME: implement CtrlTlsCert && CtrlTlsKey
+// FIXME: need some way to implement timeouts for reverse proxies
 
 const (
 	envBearerToken = `ULTRA_BEARER_TOKEN`
