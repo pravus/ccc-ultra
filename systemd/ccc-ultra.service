@@ -6,8 +6,9 @@ Requires=docker.service
 [Service]
 TimeoutStartSec=0
 Restart=always
-ExecStart=/opt/ccc/bin/ccc-ultra-start
-ExecStop=/opt/ccc/bin/ccc-ultra-stop
+ExecStartPre=-/opt/ccc/bin/ccc-pod -stop -f /opt/ccc/etc/ultra/ccc-pod.yaml
+ExecStart=/opt/ccc/bin/ccc-pod -start -f /opt/ccc/etc/ultra/ccc-pod.yaml
+ExecStop=/opt/ccc/bin/ccc-pod -stop -f /opt/ccc/etc/ultra/ccc-pod.yaml
 
 [Install]
 WantedBy=multi-user.target
