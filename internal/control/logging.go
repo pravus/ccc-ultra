@@ -30,18 +30,30 @@ var DefaultLogLevel = LogLevelInfo
 func LogLevelFromString(want string) LogLevel {
 	level := DefaultLogLevel
 	switch strings.ToLower(want) {
-	case `all`:   level = LogLevelTrace
-	case `trace`: level = LogLevelTrace
-	case `debug`: level = LogLevelDebug
-	case `info`:  level = LogLevelInfo
-	case `warn`:  level = LogLevelWarn
-	case `error`: level = LogLevelError
-	case `none`:  level = LogLevelError
-	case `panic`: level = LogLevelError
-	case `fatal`: level = LogLevelError
-	case `serve`: level = LogLevelError
-	case `audit`: level = LogLevelError
-	case `boot`: level  = LogLevelError
+	case `all`:
+		level = LogLevelTrace
+	case `trace`:
+		level = LogLevelTrace
+	case `debug`:
+		level = LogLevelDebug
+	case `info`:
+		level = LogLevelInfo
+	case `warn`:
+		level = LogLevelWarn
+	case `error`:
+		level = LogLevelError
+	case `none`:
+		level = LogLevelError
+	case `panic`:
+		level = LogLevelError
+	case `fatal`:
+		level = LogLevelError
+	case `serve`:
+		level = LogLevelError
+	case `audit`:
+		level = LogLevelError
+	case `boot`:
+		level = LogLevelError
 	}
 	return level
 }
@@ -49,18 +61,30 @@ func LogLevelFromString(want string) LogLevel {
 func (level LogLevel) String() string {
 	text := `invalid`
 	switch level {
-	case LogLevelAll:   text = `all`
-	case LogLevelTrace: text = `trace`
-	case LogLevelDebug: text = `debug`
-	case LogLevelInfo:  text = `info`
-	case LogLevelWarn:  text = `warn`
-	case LogLevelError: text = `error`
-	case LogLevelNone:  text = `none`
-	case LogLevelPanic: text = `panic`
-	case LogLevelFatal: text = `fatal`
-	case LogLevelServe: text = `serve`
-	case LogLevelAudit: text = `audit`
-	case LogLevelBoot:  text = `boot`
+	case LogLevelAll:
+		text = `all`
+	case LogLevelTrace:
+		text = `trace`
+	case LogLevelDebug:
+		text = `debug`
+	case LogLevelInfo:
+		text = `info`
+	case LogLevelWarn:
+		text = `warn`
+	case LogLevelError:
+		text = `error`
+	case LogLevelNone:
+		text = `none`
+	case LogLevelPanic:
+		text = `panic`
+	case LogLevelFatal:
+		text = `fatal`
+	case LogLevelServe:
+		text = `serve`
+	case LogLevelAudit:
+		text = `audit`
+	case LogLevelBoot:
+		text = `boot`
 	}
 	return text
 }

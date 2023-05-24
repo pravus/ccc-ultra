@@ -35,6 +35,9 @@ import (
 // FIXME: need some way to implement timeouts for reverse proxies
 
 const (
+	envLogLevel = `ULTRA_LOG_LEVEL`
+)
+const (
 	envBearerToken = `ULTRA_BEARER_TOKEN`
 )
 const (
@@ -153,7 +156,7 @@ func main() {
 		HttpsTlsCert:       flag.String(`https-tls-cert`, ``, `specifies the location of the server tls certificate`),
 		HttpsTlsKey:        flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
 		Index:              flag.String(`index`, `index.html`, `specifies the name of the default index file`),
-		LogLevel:           flag.String(`log-level`, `info`, `specifies the logging level`),
+		LogLevel:           flag.String(`log-level`, ``, `specifies the logging level`),
 		Prometheus:         flag.Bool(`prometheus`, false, `enable prometheus`),
 		TimeoutIdle:        flag.Duration(`timeout-idle`, 5*time.Second, `specifies the request idle timeout duration`),
 		TimeoutRead:        flag.Duration(`timeout-read`, 10*time.Second, `specifies the request read timeout duration`),
@@ -182,6 +185,7 @@ func main() {
 		*flags.Ctrl = first(*flags.Ctrl, os.Getenv(envCtrlAddress))
 		*flags.Http = first(*flags.Http, os.Getenv(envHttpAddress), defHttpAddress)
 		*flags.Https = first(*flags.Https, os.Getenv(envHttpsAddress), defHttpsAddress)
+		*flags.LogLevel = first(*flags.LogLevel, os.Getenv(envHttpsAddress), `info`)
 	}
 
 	// inspect
@@ -341,9 +345,9 @@ func main() {
 				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
+				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
 					root := http.Handler(handler.Cocytus)
-					root = middleware.NewHome(hfs, *flags.HomeDir, logger)(root)
+					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
 					if *flags.Prometheus {
 						root = metrics(root)
 					}
@@ -432,9 +436,9 @@ func main() {
 				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
+				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
 					root := http.Handler(handler.Cocytus)
-					root = middleware.NewHome(hfs, *flags.HomeDir, logger)(root)
+					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
 					if *flags.Prometheus {
 						root = metrics(root)
 					}
@@ -492,6 +496,15 @@ func main() {
 				return root
 			}())
 			// NOTE: bearer doesn't get wrapped for paths under here because the router isn't wrapped
+			router.Route(`/log`, func(router chi.Router) {
+				handler := http.Handler(handler.Log(logger))
+				if *flags.BearerToken != `` {
+					handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
+				}
+				handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
+				handler = metrics(handler)
+				router.Mount(`/`, handler)
+			})
 			router.Route(`/metrics`, func(router chi.Router) {
 				if *flags.Prometheus {
 					handler := http.Handler(promhttp.Handler())

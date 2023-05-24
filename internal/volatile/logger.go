@@ -12,7 +12,7 @@ import (
 )
 
 type Logger struct {
-	level    control.LogLevel
+	level control.LogLevel
 }
 
 var _ control.Logger = (*Logger)(nil)

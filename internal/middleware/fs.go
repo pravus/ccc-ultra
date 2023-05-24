@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"html/template"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
@@ -45,10 +45,14 @@ func NewFs(driver model.FsDriver, logger control.Logger) func(http.Handler) http
 			}
 			node, err := driver.Get(path)
 			if err != nil {
-				if err != model.ErrFsNotFound {
-					logger.Warn(`driver error: %s`, err)
+				switch err {
+				case model.ErrFsNotFound:
+					logger.Trace(`driver error: %s: %s`, path, err)
+					next.ServeHTTP(w, r)
+				default:
+					logger.Error(`driver error: %s: %s`, path, err)
+					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				}
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
 			publish(logger, path, node, next, w, r)
@@ -56,7 +60,7 @@ func NewFs(driver model.FsDriver, logger control.Logger) func(http.Handler) http
 	}
 }
 
-func NewHome(driver model.FsDriver, public string, logger control.Logger) func(http.Handler) http.Handler {
+func NewHome(driver model.FsDriver, prefix string, public string, logger control.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := chi.URLParam(r, `user`)
@@ -86,7 +90,7 @@ func NewHome(driver model.FsDriver, public string, logger control.Logger) func(h
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			publish(logger, `/@`+user+`/`+path, node, next, w, r)
+			publish(logger, `/`+prefix+user+`/`+path, node, next, w, r)
 		})
 	}
 }
