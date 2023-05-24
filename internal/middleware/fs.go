@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"fmt"
 	"html/template"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"ultra/internal/control"
 	"ultra/internal/model"
 )
 
@@ -30,12 +31,12 @@ var fsIndex = template.Must(template.New(`node.listing`).Parse(strings.TrimSpace
 </html>
 `) + "\n"))
 
-func NewFs(driver model.FsDriver) func(http.Handler) http.Handler {
+func NewFs(driver model.FsDriver, logger control.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path, err := url.PathUnescape(r.URL.String())
 			if err != nil {
-				fmt.Printf("unescape error: %s\n", err)
+				logger.Warn(`unescape error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
@@ -44,16 +45,16 @@ func NewFs(driver model.FsDriver) func(http.Handler) http.Handler {
 			}
 			node, err := driver.Get(path)
 			if err != nil {
-				fmt.Printf("driver error: %s\n", err)
+				logger.Warn(`driver error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			publish(path, node, next, w, r)
+			publish(logger, path, node, next, w, r)
 		})
 	}
 }
 
-func NewHome(driver model.FsDriver, public string) func(http.Handler) http.Handler {
+func NewHome(driver model.FsDriver, public string, logger control.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := chi.URLParam(r, `user`)
@@ -63,7 +64,7 @@ func NewHome(driver model.FsDriver, public string) func(http.Handler) http.Handl
 			}
 			path, err := url.PathUnescape(r.URL.String())
 			if err != nil {
-				fmt.Printf("unescape error: %s\n", err)
+				logger.Warn(`unescape error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
@@ -79,16 +80,16 @@ func NewHome(driver model.FsDriver, public string) func(http.Handler) http.Handl
 			target := `/` + user + `/` + public + `/` + path
 			node, err := driver.Get(target)
 			if err != nil {
-				fmt.Printf("driver error: %s\n", err)
+				logger.Warn(`driver error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			publish(`/@`+user+`/`+path, node, next, w, r)
+			publish(logger, `/@`+user+`/`+path, node, next, w, r)
 		})
 	}
 }
 
-func publish(path string, node model.FsNode, next http.Handler, w http.ResponseWriter, r *http.Request) {
+func publish(logger control.Logger, path string, node model.FsNode, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	if len(node.Nodes) > 0 {
 		w.Header().Add(`content-type`, `text/html`)
 		w.WriteHeader(http.StatusOK)
@@ -102,7 +103,7 @@ func publish(path string, node model.FsNode, next http.Handler, w http.ResponseW
 			Nodes []model.FsNode
 		}{Path: path, Nodes: node.Nodes}
 		if err := fsIndex.Execute(w, data); err != nil {
-			fmt.Printf("template error: %s\n", err)
+			logger.Warn(`template error: %s`, err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -114,12 +115,12 @@ func publish(path string, node model.FsNode, next http.Handler, w http.ResponseW
 		w.WriteHeader(http.StatusOK)
 		count, err := io.CopyN(w, node.Data, node.Size)
 		if err != nil {
-			fmt.Printf("copy error: %s\n", err)
+			logger.Warn(`copy: %s`, err)
 		} else if count != node.Size {
-			fmt.Printf("copy error: %d written is different than expected amount %d\n", count, node.Size)
+			logger.Warn(`copy: %d written is different than expected amount %d`, count, node.Size)
 		}
 		if err := node.Data.Close(); err != nil {
-			fmt.Printf("close error: %s\n", err)
+			logger.Warn(`close error: %s`, err)
 		}
 	} else {
 		next.ServeHTTP(w, r)

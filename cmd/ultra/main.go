@@ -21,14 +21,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"ultra/internal/control"
 	"ultra/internal/handler"
 	"ultra/internal/middleware"
 	"ultra/internal/oe"
 	"ultra/internal/volatile"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// FIXME: implement CtrlTlsCert && CtrlTlsKey
 
 const (
 	envBearerToken = `ULTRA_BEARER_TOKEN`
@@ -121,14 +124,14 @@ type Services []Service
 
 func main() {
 	// logger
-	logger := volatile.NewLogger(volatile.LogLevelInfo)
+	logger := control.Logger(volatile.NewLogger(control.LogLevelBoot))
 
 	// boot
+	// FIXME: re-scope this to just flags somehow
 	hostname, err := os.Hostname()
 	if err != nil {
 		logger.Fatal(`hostname: error: %s`, err)
 	}
-	logger.Info(`ultra %s`, hostname)
 
 	// flags
 	flags := Flags{
@@ -187,9 +190,7 @@ func main() {
 
 	// validate
 	if *flags.LogLevel != `` {
-		if err := logger.SetLevelFromString(*flags.LogLevel); err != nil {
-			logger.Fatal(`log level error: %s`, err)
-		}
+		logger.SetLevelFromString(*flags.LogLevel)
 	}
 	if *flags.Root == `` {
 		logger.Fatal(`-root must not be empty`)
@@ -210,6 +211,9 @@ func main() {
 			logger.Fatal(`-reverse-proxy-tls requires https to be enabled`)
 		}
 	}
+
+	// control plane
+	logger.Audit(`ultra.boot %s logging.level=%s`, *flags.Hostname, logger.Level().String())
 
 	// wand
 	wand := volatile.Magic()
@@ -304,26 +308,26 @@ func main() {
 	// http
 	{
 		label := `http`
+		scheme := `http`
+		features := []string{}
 		if flags.httpEnabled {
-			scheme := `http`
-			features := []string{}
 			metrics := middleware.Prometheus(label)
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
-			router.NotFound(http.HandlerFunc(handler.Cocytus))
+			router.NotFound(handler.Cocytus)
 			router.Mount(`/`, func() http.Handler {
 				if *flags.HttpsOnly {
 					features = append(features, `https-only`)
-					return http.Handler(http.HandlerFunc(handler.Gehenna))
+					return http.Handler(handler.Gehenna)
 				}
-				root := http.Handler(http.HandlerFunc(handler.Cocytus))
+				root := http.Handler(handler.Cocytus)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
-					root = middleware.NewFs(ofs)(root)
+					root = middleware.NewFs(ofs, logger)(root)
 				}
 				if vfs.Len() > 0 {
 					features = append(features, `vfs`)
-					root = middleware.NewFs(vfs)(root)
+					root = middleware.NewFs(vfs, logger)(root)
 				}
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.Prometheus {
@@ -337,8 +341,8 @@ func main() {
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
-					root := http.Handler(http.HandlerFunc(handler.Cocytus))
-					root = middleware.NewHome(hfs, *flags.HomeDir)(root)
+					root := http.Handler(handler.Cocytus)
+					root = middleware.NewHome(hfs, *flags.HomeDir, logger)(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					if *flags.Prometheus {
 						root = metrics(root)
@@ -374,9 +378,9 @@ func main() {
 	// https
 	{
 		label := `https`
+		scheme := `https`
+		features := []string{`tls`}
 		if flags.httpsEnabled {
-			scheme := `https`
-			features := []string{`tls`}
 			metrics := middleware.Prometheus(label)
 			formatter := volatile.NewLogFormatter(label, logger)
 			cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
@@ -401,16 +405,16 @@ func main() {
 				},
 			}
 			router := chi.NewRouter()
-			router.NotFound(http.HandlerFunc(handler.Cocytus))
+			router.NotFound(handler.Cocytus)
 			router.Mount(`/`, func() http.Handler {
-				root := http.Handler(http.HandlerFunc(handler.Cocytus))
+				root := http.Handler(handler.Cocytus)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
-					root = middleware.NewFs(ofs)(root)
+					root = middleware.NewFs(ofs, logger)(root)
 				}
 				if vfs.Len() > 0 {
 					features = append(features, `vfs`)
-					root = middleware.NewFs(vfs)(root)
+					root = middleware.NewFs(vfs, logger)(root)
 				}
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.Prometheus {
@@ -428,8 +432,8 @@ func main() {
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 				router.Route(`/` + *flags.HomePrefix + `{user}`, func(router chi.Router) {
-					root := http.Handler(http.HandlerFunc(handler.Cocytus))
-					root = middleware.NewHome(hfs, *flags.HomeDir)(root)
+					root := http.Handler(handler.Cocytus)
+					root = middleware.NewHome(hfs, *flags.HomeDir, logger)(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					if *flags.Prometheus {
 						root = metrics(root)
@@ -466,33 +470,34 @@ func main() {
 	// ctrl
 	{
 		label := `ctrl`
+		scheme := `http`
+		features := []string{}
 		if flags.ctrlEnabled {
-			scheme := `http`
-			features := []string{}
 			metrics := middleware.Prometheus(label)
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
-			router.NotFound(http.HandlerFunc(handler.Cocytus))
+			router.NotFound(handler.Cocytus)
 			router.Mount(`/`, func() http.Handler {
-				root := http.Handler(http.HandlerFunc(handler.Cocytus))
-				root = middleware.Control(root, *flags.CtrlLogger, formatter)
+				root := http.Handler(handler.Cocytus)
 				if *flags.BearerToken != `` {
 					features = append(features, `bearer`)
-					root = middleware.Bearer(*flags.BearerToken)(root)
+					root = middleware.Bearer(*flags.BearerToken, false, nil, logger)(root)
 				}
+				root = middleware.Control(root, *flags.CtrlLogger, formatter)
 				if *flags.Prometheus {
 					features = append(features, `prometheus`)
 					root = metrics(root)
 				}
 				return root
 			}())
+			// NOTE: bearer doesn't get wrapped for paths under here because the router isn't wrapped
 			router.Route(`/metrics`, func(router chi.Router) {
 				if *flags.Prometheus {
 					handler := http.Handler(promhttp.Handler())
-					handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
 					if *flags.BearerToken != `` {
-						handler = middleware.Bearer(*flags.BearerToken)(handler)
+						handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
 					}
+					handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
 					handler = metrics(handler)
 					router.Mount(`/prometheus`, handler)
 				}
@@ -516,7 +521,7 @@ func main() {
 		go func() {
 			connect := service.server.Addr
 			if strings.IndexRune(connect, ':') == 0 {
-				connect = hostname + connect
+				connect = *flags.Hostname + connect
 			}
 			features := ``
 			if len(service.features) > 0 {
