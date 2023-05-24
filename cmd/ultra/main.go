@@ -255,6 +255,7 @@ func main() {
 
 	// other
 	if *flags.Ez {
+		flags.ofsEnabled = false
 		if err := vfs.Load(`/`, *flags.Index, func(data []byte) (string, error) {
 			logger.Info(`vfs.load root %s %d`, *flags.Index, len(data))
 			return wand.Zap(*flags.Index), nil
