@@ -1,31 +1,35 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
+	"ultra/internal/control"
 	"ultra/internal/handler"
 )
 
-func Bearer(token string) func(http.Handler) http.Handler {
+func Bearer(token string, audit bool, fail http.Handler, logger control.Logger) func(http.Handler) http.Handler {
+	if fail == nil {
+		fail = handler.Cocytus
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if text := r.Header.Get(`authorization`); len(text) <= 0 {
-				fmt.Printf("bearer fail: no authorization token\n")
-				handler.Cocytus(w, r)
+				logger.Audit(`bearer: no authorization token`)
+				fail.ServeHTTP(w, r)
 			} else if index := strings.Index(text, ` `); index < 0 {
-				fmt.Printf("bearer fail: malformed authorization text\n")
-				handler.Cocytus(w, r)
+				logger.Audit(`bearer: malformed authorization text`)
+				fail.ServeHTTP(w, r)
 			} else if strings.ToLower(text[0:index]) != `bearer` {
-				fmt.Printf("bearer fail: invalid authentication type \"%s\"\n", text[0:index])
-				handler.Cocytus(w, r)
+				logger.Audit(`bearer: invalid authentication type "%s"`, text[0:index])
+				fail.ServeHTTP(w, r)
 			} else if text[index+1:] != token {
-				fmt.Printf("bearer fail: authentication failed\n")
-				handler.Cocytus(w, r)
+				logger.Audit(`bearer: authentication failed`)
+				fail.ServeHTTP(w, r)
 			} else {
-				// TODO: send to audit logger
-				//fmt.Printf("bearer pass: token verified\n")
+				if audit {
+					logger.Audit(`bearer: authentication success`)
+				}
 				next.ServeHTTP(w, r)
 			}
 		})
