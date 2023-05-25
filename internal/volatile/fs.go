@@ -70,3 +70,11 @@ func (fs FsDriver) Get(path string) (model.FsNode, error) {
 		return node, nil
 	}
 }
+
+func (fs FsDriver) Put(path string, entry FsEntry) {
+	fs.root[path] = entry
+}
+
+func (fs *FsDriver) Rub(path string) {
+	delete(fs.root, path)
+}

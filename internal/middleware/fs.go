@@ -47,10 +47,10 @@ func NewFs(driver model.FsDriver, logger control.Logger) func(http.Handler) http
 			if err != nil {
 				switch err {
 				case model.ErrFsNotFound:
-					logger.Trace(`driver error: %s: %s`, path, err)
+					logger.Trace(`driver(%T) error: %s: %s`, driver, path, err)
 					next.ServeHTTP(w, r)
 				default:
-					logger.Error(`driver error: %s: %s`, path, err)
+					logger.Error(`driver(%T) error: %s: %s`, driver, path, err)
 					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				}
 				return
@@ -86,7 +86,7 @@ func NewHome(driver model.FsDriver, prefix string, public string, logger control
 			target := `/` + user + `/` + public + `/` + path
 			node, err := driver.Get(target)
 			if err != nil {
-				logger.Warn(`driver error: %s`, err)
+				logger.Warn(`driver(%T) error: %s`, driver, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}

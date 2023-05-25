@@ -35,6 +35,7 @@ import (
 // FIXME: add check for ez mode that root is a directory only
 // FIXME: implement CtrlTlsCert && CtrlTlsKey
 // FIXME: need some way to implement timeouts for reverse proxies
+// FIXME: should vfs be optional?
 
 const (
 	envLogLevel = `ULTRA_LOG_LEVEL`
@@ -337,7 +338,7 @@ func main() {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
 				}
-				if vfs.Len() > 0 {
+				{
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
@@ -422,7 +423,7 @@ func main() {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
 				}
-				if vfs.Len() > 0 {
+				{
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
@@ -504,6 +505,7 @@ func main() {
 			}())
 			// NOTE: bearer doesn't get wrapped for paths under here because the router isn't wrapped
 			router.Route(`/log`, func(router chi.Router) {
+				features = append(features, `log`)
 				handler := http.Handler(handler.Log(logger))
 				if *flags.BearerToken != `` {
 					handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
@@ -513,6 +515,7 @@ func main() {
 				router.Mount(`/`, handler)
 			})
 			router.Route(`/metrics`, func(router chi.Router) {
+				features = append(features, `metrics`)
 				if *flags.Prometheus {
 					handler := http.Handler(promhttp.Handler())
 					if *flags.BearerToken != `` {
@@ -522,6 +525,16 @@ func main() {
 					handler = metrics(handler)
 					router.Mount(`/prometheus`, handler)
 				}
+			})
+			router.Route(`/vfs`, func(router chi.Router) {
+				features = append(features, `vfs`)
+				handler := http.Handler(volatile.VfsHandler(vfs, logger))
+				if *flags.BearerToken != `` {
+					handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
+				}
+				handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
+				handler = metrics(handler)
+				router.Mount(`/`, handler)
 			})
 			sort.Strings(features)
 			services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
