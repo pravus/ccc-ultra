@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"strings"
 )
 
@@ -105,4 +106,27 @@ type Logger interface {
 	Fatal(string, ...any)
 	Serve(string, ...any)
 	Audit(string, ...any)
+}
+
+type HttpLogWriter struct {
+	logger Logger
+}
+
+func NewHttpLogWriter(logger Logger) HttpLogWriter {
+	writer := HttpLogWriter{
+		logger: logger,
+	}
+	return writer
+}
+
+func (writer HttpLogWriter) Write(message []byte) (int, error) {
+	message = bytes.TrimSpace(message)
+	switch {
+	case bytes.HasSuffix(message, []byte(`golang.org/issue/25192`)),
+		bytes.HasPrefix(message, []byte(`http: TLS handshake error `)):
+		writer.logger.Trace(`%s`, string(message))
+	default:
+		writer.logger.Serve(`%s`, string(message))
+	}
+	return len(message), nil
 }

@@ -10,6 +10,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -376,6 +377,8 @@ func main() {
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
 				WriteTimeout: *flags.TimeoutWrite,
+				// FIXME: DisableGeneralOptionsHandler?
+				ErrorLog: log.New(control.NewHttpLogWriter(logger), ``, 0),
 			}})
 		} else {
 			logger.Info(`%s.disabled`, label)
@@ -468,6 +471,8 @@ func main() {
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
 				WriteTimeout: *flags.TimeoutWrite,
+				// FIXME: DisableGeneralOptionsHandler?
+				ErrorLog: log.New(control.NewHttpLogWriter(logger), ``, 0),
 			}})
 		} else {
 			logger.Info(`%s.disabled`, label)
@@ -525,6 +530,8 @@ func main() {
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
 				WriteTimeout: *flags.TimeoutWrite,
+				// FIXME: DisableGeneralOptionsHandler?
+				ErrorLog: log.New(control.NewHttpLogWriter(logger), ``, 0),
 			}})
 		} else {
 			logger.Info(`%s.disabled`, label)
