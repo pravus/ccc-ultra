@@ -3,7 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"image"
@@ -11,6 +16,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
+	"math/big"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -75,6 +81,7 @@ type Flags struct {
 	httpsEnabled       bool
 	HttpsHsts          *time.Duration
 	HttpsOnly          *bool
+	HttpsSelfSign      *bool
 	HttpsTlsCert       *string
 	HttpsTlsKey        *string
 	Index              *string
@@ -159,6 +166,7 @@ func main() {
 		Https:              flag.String(`https`, ``, `specifies the bind address for the https service`),
 		HttpsHsts:          flag.Duration(`https-hsts`, time.Duration(0), `specifies the value used for the max-age parameter in the HSTS header (enables -https-only)`),
 		HttpsOnly:          flag.Bool(`https-only`, false, `http requests will be redirected to the https server`),
+		HttpsSelfSign:      flag.Bool(`https-self-sign`, false, `generate a self-signed tls certificate`),
 		HttpsTlsCert:       flag.String(`https-tls-cert`, ``, `specifies the location of the server tls certificate`),
 		HttpsTlsKey:        flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
 		Index:              flag.String(`index`, `index.html`, `specifies the name of the default index file`),
@@ -197,7 +205,7 @@ func main() {
 	// inspect
 	flags.ctrlEnabled = *flags.Ctrl != ``
 	flags.httpEnabled = *flags.Http != ``
-	flags.httpsEnabled = *flags.Https != `` && *flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``
+	flags.httpsEnabled = *flags.Https != `` && (*flags.HttpsSelfSign || (*flags.HttpsTlsCert != `` && *flags.HttpsTlsKey != ``))
 
 	// validate
 	if *flags.LogLevel != `` {
@@ -411,10 +419,89 @@ func main() {
 				metrics = middleware.Prometheus(label)
 			}
 			formatter := volatile.NewLogFormatter(label, logger)
-			cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
-			if err != nil {
-				logger.Fatal(`https.key-pair: error: %s`, err)
+
+			var cert tls.Certificate
+			if *flags.HttpsSelfSign {
+				features = append(features, `self-sign`)
+				ca := &x509.Certificate{
+					SerialNumber: big.NewInt(1),
+					Subject: pkix.Name{
+						Organization:  []string{`ultra`},
+						// FIXME: what to use for values here?
+						/*
+						Country:       []string{``},
+						Province:      []string{``},
+						Locality:      []string{``},
+						StreetAddress: []string{``},
+						PostalCode:    []string{``},
+						*/
+					},
+					NotBefore:             time.Now().UTC(),
+					NotAfter:              time.Now().UTC().AddDate(1, 0, 0),
+					IsCA:                  true,
+					ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+					KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+					BasicConstraintsValid: true,
+				}
+				caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+				if err != nil {
+					logger.Fatal(`https.self-sign.ca generate key: %s`, err)
+				}
+				caKeyPem := &bytes.Buffer{}
+				pem.Encode(caKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(caKey)})
+				caCert, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+				if err != nil {
+					logger.Fatal(`https.self-sign.ca create certificate: %s`, err)
+				}
+				caCertPem := &bytes.Buffer{}
+				pem.Encode(caCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: caCert})
+
+				cs := &x509.Certificate{
+					SerialNumber: big.NewInt(1),
+					Subject: pkix.Name{
+						CommonName:    *flags.Hostname,
+						// FIXME: what to use for values here?
+						/*
+						Organization:  []string{`ultra`},
+						Country:       []string{``},
+						Province:      []string{``},
+						Locality:      []string{``},
+						StreetAddress: []string{``},
+						PostalCode:    []string{``},
+						*/
+					},
+					NotBefore:    time.Now().UTC(),
+					NotAfter:     time.Now().UTC().AddDate(1, 0, 0),
+					SubjectKeyId: []byte{1, 2, 3, 4, 6},
+					ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+					KeyUsage:     x509.KeyUsageDigitalSignature,
+					DNSNames:     []string{`localhost`, `127.0.0.1`},
+				}
+				csKey, err := rsa.GenerateKey(rand.Reader, 2048)
+				if err != nil {
+					logger.Fatal(`https.self-sign.cs generate key: %s`, err)
+				}
+				csKeyPem := &bytes.Buffer{}
+				pem.Encode(csKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(csKey)})
+				csCert, err := x509.CreateCertificate(rand.Reader, cs, ca, &csKey.PublicKey, caKey)
+				if err != nil {
+					logger.Fatal(`https.self-sign.cs create certificate: %s`, err)
+				}
+				csCertPem := &bytes.Buffer{}
+				pem.Encode(csCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: csCert})
+
+				cert, err = tls.X509KeyPair(csCertPem.Bytes(), csKeyPem.Bytes())
+				if err != nil {
+					logger.Fatal(`https.self-sign.cs create certificate: %s`, err)
+				}
+			} else {
+				cert, err = tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
+				if err != nil {
+					logger.Fatal(`https.self-sign key pair: error: %s`, err)
+				}
 			}
+			// FIXME: report cert details (expiration, etc)
+
 			tlsConfig := &tls.Config{
 				MinVersion:               tls.VersionTLS12,
 				PreferServerCipherSuites: true,
