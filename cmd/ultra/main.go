@@ -36,6 +36,7 @@ import (
 // FIXME: implement CtrlTlsCert && CtrlTlsKey
 // FIXME: need some way to implement timeouts for reverse proxies
 // FIXME: should vfs be optional?
+// FIXME: it should be a wrapped interface
 
 const (
 	envLogLevel = `ULTRA_LOG_LEVEL`
@@ -58,6 +59,7 @@ const (
 type Flags struct {
 	BearerToken        *string
 	Compression        *int
+	Croesus            *bool
 	Ctrl               *string
 	CtrlLogger         *bool
 	ctrlEnabled        bool
@@ -144,6 +146,7 @@ func main() {
 	flags := Flags{
 		BearerToken:        flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
 		Compression:        flag.Int(`compression`, 5, `specifies the compression level`),
+		Croesus:            flag.Bool(`croesus`, false, `enable payments`),
 		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
 		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
 		Ez:                 flag.Bool(`ez`, false, `auto loads the index, favicon.ico, and robots.txt from the root`),
@@ -311,6 +314,14 @@ func main() {
 		}
 	}
 
+	// not found
+	_404 := handler.Cocytus
+	_405 := handler.Manus
+	if *flags.Croesus {
+		_404 = handler.Mammon
+		_405 = handler.Mammon
+	}
+
 	// services
 	var services Services
 
@@ -320,20 +331,20 @@ func main() {
 		scheme := `http`
 		features := []string{}
 		if flags.httpEnabled {
-			metrics := middleware.Prometheus(label)
+			metrics := middleware.Identity
+			if *flags.Prometheus {
+				features = append(features, `prometheus`)
+				metrics = middleware.Prometheus(label)
+			}
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
-			router.NotFound(handler.Cocytus)
+			router.NotFound(_404)
 			router.Mount(`/`, func() http.Handler {
 				if *flags.HttpsOnly {
 					features = append(features, `https-only`)
 					return http.Handler(handler.Gehenna)
 				}
-				root := http.Handler(handler.Cocytus)
-				if *flags.Prometheus {
-					features = append(features, `prometheus`)
-					root = metrics(root)
-				}
+				root := http.Handler(_404)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
@@ -342,6 +353,8 @@ func main() {
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
+				root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
+				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				return root
 			}())
@@ -350,11 +363,10 @@ func main() {
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
-					root := http.Handler(handler.Cocytus)
+					root := http.Handler(_404)
 					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-					if *flags.Prometheus {
-						root = metrics(root)
-					}
+					root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
+					root = metrics(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					router.Mount(`/`, root)
 				})
@@ -363,9 +375,7 @@ func main() {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
 					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
-					if *flags.Prometheus {
-						handler = metrics(handler)
-					}
+					handler = metrics(handler)
 					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
 					router.Mount(proxy.Mount, handler)
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
@@ -392,7 +402,11 @@ func main() {
 		scheme := `https`
 		features := []string{`tls`}
 		if flags.httpsEnabled {
-			metrics := middleware.Prometheus(label)
+			metrics := middleware.Identity
+			if *flags.Prometheus {
+				features = append(features, `prometheus`)
+				metrics = middleware.Prometheus(label)
+			}
 			formatter := volatile.NewLogFormatter(label, logger)
 			cert, err := tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
 			if err != nil {
@@ -416,9 +430,9 @@ func main() {
 				},
 			}
 			router := chi.NewRouter()
-			router.NotFound(handler.Cocytus)
+			router.NotFound(_404)
 			router.Mount(`/`, func() http.Handler {
-				root := http.Handler(handler.Cocytus)
+				root := http.Handler(_404)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
@@ -427,11 +441,9 @@ func main() {
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
+				root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
+				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
-				if *flags.Prometheus {
-					features = append(features, `prometheus`)
-					root = metrics(root)
-				}
 				if *flags.HttpsHsts > time.Duration(0) {
 					features = append(features, `hsts`)
 					root = middleware.Hsts(*flags.HttpsHsts)(root)
@@ -443,11 +455,10 @@ func main() {
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
-					root := http.Handler(handler.Cocytus)
+					root := http.Handler(_404)
 					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-					if *flags.Prometheus {
-						root = metrics(root)
-					}
+					root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
+					root = metrics(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					router.Mount(`/`, root)
 				})
@@ -456,9 +467,7 @@ func main() {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxiesTls {
 					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
-					if *flags.Prometheus {
-						handler = metrics(handler)
-					}
+					handler = metrics(handler)
 					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
 					router.Mount(proxy.Mount, handler)
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
@@ -486,21 +495,22 @@ func main() {
 		scheme := `http`
 		features := []string{}
 		if flags.ctrlEnabled {
-			metrics := middleware.Prometheus(label)
+			metrics := middleware.Identity
+			if *flags.Prometheus {
+				features = append(features, `prometheus`)
+				metrics = middleware.Prometheus(label)
+			}
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
-			router.NotFound(handler.Cocytus)
+			router.NotFound(_404)
 			router.Mount(`/`, func() http.Handler {
-				root := http.Handler(handler.Cocytus)
+				root := http.Handler(_404)
 				if *flags.BearerToken != `` {
 					features = append(features, `bearer`)
 					root = middleware.Bearer(*flags.BearerToken, false, nil, logger)(root)
 				}
 				root = middleware.Control(root, *flags.CtrlLogger, formatter)
-				if *flags.Prometheus {
-					features = append(features, `prometheus`)
-					root = metrics(root)
-				}
+				root = metrics(root)
 				return root
 			}())
 			// NOTE: bearer doesn't get wrapped for paths under here because the router isn't wrapped
