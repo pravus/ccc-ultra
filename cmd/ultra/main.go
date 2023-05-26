@@ -225,6 +225,9 @@ func main() {
 
 	// control plane
 	logger.Audit(`ultra.boot %s logging.level=%s`, *flags.Hostname, logger.Level().String())
+	if *flags.Croesus {
+		logger.Audit(`¤ rich as croesus`)
+	}
 
 	// wand
 	wand := volatile.Magic()
