@@ -4,6 +4,7 @@ import (
 	"net/http"
 )
 
+const ManusText =`Clean gloves hide dirty hands and mine are dirtier than most.`
 const ManusAscii =`
                              .:
                             8: 88
@@ -34,5 +35,5 @@ const ManusAscii =`
 
 var Manus = mummify(func(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(`connection`, `close`)
-	http.Error(w, ManusAscii, http.StatusMethodNotAllowed)
+	http.Error(w, ManusText + "\r\n" + ManusAscii, http.StatusMethodNotAllowed)
 })
