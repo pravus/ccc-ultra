@@ -8,8 +8,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-
 	"ultra/internal/control"
 	"ultra/internal/model"
 )
@@ -63,16 +61,18 @@ func NewFs(driver model.FsDriver, logger control.Logger) func(http.Handler) http
 func NewHome(driver model.FsDriver, prefix string, public string, logger control.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			user := chi.URLParam(r, `user`)
-			if user == `` {
-				next.ServeHTTP(w, r)
-				return
-			}
 			path, err := url.PathUnescape(r.URL.String())
 			if err != nil {
 				logger.Warn(`unescape error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
+			}
+			if !strings.HasPrefix(path, `/`+prefix) {
+				next.ServeHTTP(w, r)
+			}
+			user := path[strings.Index(path, prefix)+len(prefix):]
+			if index := strings.Index(user, `/`); index >= 0 {
+				user = user[:index]
 			}
 			if index := strings.Index(path, user); index >= 0 {
 				path = path[index+len(user):]

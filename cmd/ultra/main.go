@@ -387,6 +387,12 @@ func main() {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
 				}
+				if *flags.Home != `` {
+					// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
+					features = append(features, `home`)
+					hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
+					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
+				}
 				{
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
@@ -400,20 +406,6 @@ func main() {
 			router.NotFound(_404)
 			router.MethodNotAllowed(_405)
 			router.Mount(`/`, root)
-			if *flags.Home != `` {
-				// FIXME: move this into the root middleware stack
-				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
-				features = append(features, `home`)
-				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
-					root := http.Handler(_404)
-					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-					root = metrics(root)
-					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
-					router.Mount(`/`, root)
-				})
-			}
-
 			if len(flags.ReverseProxies) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
@@ -458,6 +450,12 @@ func main() {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
 				}
+				if *flags.Home != `` {
+					// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
+					features = append(features, `home`)
+					hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
+					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
+				}
 				{
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
@@ -475,19 +473,6 @@ func main() {
 			router.NotFound(_404)
 			router.MethodNotAllowed(_405)
 			router.Mount(`/`, root)
-			if *flags.Home != `` {
-				// FIXME: move this into the root middleware stack
-				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
-				features = append(features, `home`)
-				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
-					root := http.Handler(_404)
-					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-					root = metrics(root)
-					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
-					router.Mount(`/`, root)
-				})
-			}
 			if len(flags.ReverseProxiesTls) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxiesTls {
