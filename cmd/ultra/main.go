@@ -346,9 +346,21 @@ func main() {
 	}
 
 	// pipes
+	counters := map[string]func(http.Handler) http.Handler{
+		`http`:  middleware.Identity,
+		`https`: middleware.Identity,
+		`ctrl`:  middleware.Identity,
+	}
+	if *flags.Prometheus {
+		for label, _ := range counters {
+			counters[label] = middleware.Prometheus(label)
+		}
+	}
+
+	// pipes
 	pipes := map[string]control.Router{
-		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger),
-		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger),
+		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger, counters[`http`]),
+		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger, counters[`https`]),
 	}
 
 	// services
@@ -358,18 +370,14 @@ func main() {
 	{
 		label := `http`
 		if flags.httpEnabled {
-			pipe := pipes[label]
 			features := []string{}
-			metrics := middleware.Identity
+			metrics := counters[label]
+			pipe := pipes[label]
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
-				metrics = middleware.Prometheus(label)
 			}
 			formatter := volatile.NewLogFormatter(label, logger)
-			router := chi.NewRouter()
-			router.NotFound(_404)
-			router.MethodNotAllowed(_405)
-			router.Mount(`/`, func() http.Handler {
+			root := func() http.Handler {
 				if *flags.HttpsOnly {
 					features = append(features, `https-only`)
 					return http.Handler(handler.Gehenna)
@@ -384,24 +392,28 @@ func main() {
 					root = middleware.NewFs(vfs, logger)(root)
 				}
 				root = pipe.Handler()(root)
-				root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
 				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				return root
-			}())
+			}()
+			router := chi.NewRouter()
+			router.NotFound(_404)
+			router.MethodNotAllowed(_405)
+			router.Mount(`/`, root)
 			if *flags.Home != `` {
+				// FIXME: move this into the root middleware stack
 				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
 					root := http.Handler(_404)
 					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-					root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
 					root = metrics(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					router.Mount(`/`, root)
 				})
 			}
+
 			if len(flags.ReverseProxies) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
@@ -433,18 +445,14 @@ func main() {
 				logger.Fatal(`%s.tls-config error: %s`, label, err)
 			}
 
-			pipe := pipes[label]
 			features := []string{}
-			metrics := middleware.Identity
+			metrics := counters[label]
+			pipe := pipes[label]
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
-				metrics = middleware.Prometheus(label)
 			}
 			formatter := volatile.NewLogFormatter(label, logger)
-			router := chi.NewRouter()
-			router.NotFound(_404)
-			router.MethodNotAllowed(_405)
-			router.Mount(`/`, func() http.Handler {
+			root := func() http.Handler {
 				root := http.Handler(_404)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
@@ -455,7 +463,6 @@ func main() {
 					root = middleware.NewFs(vfs, logger)(root)
 				}
 				root = pipe.Handler()(root)
-				root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
 				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 				if *flags.HttpsHsts > time.Duration(0) {
@@ -463,15 +470,19 @@ func main() {
 					root = middleware.Hsts(*flags.HttpsHsts)(root)
 				}
 				return root
-			}())
+			}()
+			router := chi.NewRouter()
+			router.NotFound(_404)
+			router.MethodNotAllowed(_405)
+			router.Mount(`/`, root)
 			if *flags.Home != `` {
+				// FIXME: move this into the root middleware stack
 				// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 				features = append(features, `home`)
 				hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 				router.Route(`/`+*flags.HomePrefix+`{user}`, func(router chi.Router) {
 					root := http.Handler(_404)
 					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-					root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
 					root = metrics(root)
 					root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 					router.Mount(`/`, root)
@@ -530,10 +541,9 @@ func main() {
 					}
 				}
 			}
-			metrics := middleware.Identity
+			metrics := counters[label]
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
-				metrics = middleware.Prometheus(label)
 			}
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()

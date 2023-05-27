@@ -23,14 +23,13 @@ type Router struct {
 	metrics    func(http.Handler) http.Handler
 }
 
-func NewRouter(label string, logger control.Logger, withLogger bool) Router {
+func NewRouter(label string, logger control.Logger, withLogger bool, metrics func(http.Handler) http.Handler) Router {
 	router := Router{
 		label:      label,
 		logger:     logger,
 		withLogger: withLogger,
 		routes:     make(map[string]Route),
-		// FIXME: this is fucking disgusting
-		metrics: middleware.Prometheus(label),
+		metrics:    metrics,
 	}
 	return router
 }
@@ -59,13 +58,13 @@ func (router Router) RubRoute(prefix string) {
 func (router Router) Handler() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path, err := url.PathUnescape(r.URL.String())
+			if err != nil {
+				router.logger.Warn(`%s.unescape error: %s`, router.label, err)
+				next.ServeHTTP(w, r)
+				return
+			}
 			for prefix, route := range router.routes {
-				path, err := url.PathUnescape(r.URL.String())
-				if err != nil {
-					router.logger.Warn(`%s.unescape error: %s`, router.label, err)
-					next.ServeHTTP(w, r)
-					return
-				}
 				if strings.HasPrefix(path, prefix) {
 					route.handler.ServeHTTP(w, r)
 					return
