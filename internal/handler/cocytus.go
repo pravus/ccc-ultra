@@ -5,7 +5,7 @@ import (
 )
 
 const CocytusText = `Ye Who Enter All Hope Abandon`
-const CocytusAscii =`
+const CocytusAscii = `
             ,:/+/-
             /M/              .,-=;//;-
        .:/= ;MH/,    ,=/+%$XH@MM#@:
@@ -30,5 +30,5 @@ M###################@%=           =+@MH%
 
 var Cocytus = mummify(func(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(`connection`, `close`)
-	http.Error(w, CocytusText + "\r\n" + CocytusAscii, http.StatusNotFound)
+	http.Error(w, CocytusText+"\r\n"+CocytusAscii, http.StatusNotFound)
 })

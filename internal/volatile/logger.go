@@ -87,6 +87,10 @@ func (logger Logger) Audit(format string, args ...any) {
 	logger.Log(control.LogLevelAudit, format, args...)
 }
 
+func (logger Logger) Help(format string, args ...any) {
+	logger.Log(control.LogLevelHelp, format, args...)
+}
+
 type LogFormatter struct {
 	label  string
 	logger control.Logger

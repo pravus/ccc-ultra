@@ -24,6 +24,7 @@ const (
 	LogLevelServe
 	LogLevelAudit
 	LogLevelBoot
+	LogLevelHelp
 )
 
 var DefaultLogLevel = LogLevelInfo
@@ -54,6 +55,8 @@ func LogLevelFromString(want string) LogLevel {
 	case `audit`:
 		level = LogLevelError
 	case `boot`:
+		level = LogLevelError
+	case `help`:
 		level = LogLevelError
 	}
 	return level
@@ -86,6 +89,8 @@ func (level LogLevel) String() string {
 		text = `audit`
 	case LogLevelBoot:
 		text = `boot`
+	case LogLevelHelp:
+		text = `help`
 	}
 	return text
 }
@@ -106,6 +111,7 @@ type Logger interface {
 	Fatal(string, ...any)
 	Serve(string, ...any)
 	Audit(string, ...any)
+	Help(string, ...any)
 }
 
 type HttpLogWriter struct {

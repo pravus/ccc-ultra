@@ -4,8 +4,8 @@ import (
 	"net/http"
 )
 
-const VerbotenText =`VERBOTEN`
-const VerbotenAscii =`
+const VerbotenText = `VERBOTEN`
+const VerbotenAscii = `
                         X8X888888X8X
                    88tttttttttttttttttt@8
                 8tttttttttttttttttttttttttt8
@@ -44,5 +44,5 @@ const VerbotenAscii =`
 
 var Verboten = mummify(func(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(`connection`, `close`)
-	http.Error(w, VerbotenText + "\r\n" + VerbotenAscii, http.StatusMethodNotAllowed)
+	http.Error(w, VerbotenText+"\r\n"+VerbotenAscii, http.StatusMethodNotAllowed)
 })

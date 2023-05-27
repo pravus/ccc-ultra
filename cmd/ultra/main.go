@@ -137,6 +137,7 @@ type Service struct {
 	scheme   string
 	address  string
 	features []string
+	help     []string
 	server   *http.Server
 }
 type Services []Service
@@ -238,6 +239,8 @@ func main() {
 	}
 
 	// control plane
+	// FIXME: boot summary
+	logger.Audit(`%s`, bootAscii)
 	logger.Audit(`ultra.boot %s logging.level=%s`, *flags.Hostname, logger.Level().String())
 	if *flags.Croesus {
 		logger.Audit(`¤ rich as croesus`)
@@ -506,7 +509,22 @@ func main() {
 				logger.Fatal(`%s.tls-config error: %s`, label, err)
 			}
 
+			help := []string{}
 			features := []string{}
+			{
+				for _, method := range []string{`GET`, `POST -d''`, `DELETE`} {
+					if *flags.BearerToken != `` {
+						features = append(features, `bearer`)
+						if *flags.CtrlSelfSign {
+							help = append(help, fmt.Sprintf(`# curl --insecure -sX%s -H 'authorization: bearer TOKEN' '%%s'`, method))
+						} else {
+							help = append(help, fmt.Sprintf(`# curl -sX%s -H 'authorization: bearer TOKEN' '%%s'`, method))
+						}
+					} else {
+						help = append(help, fmt.Sprintf(`# curl -sX%s '%%s'`, method))
+					}
+				}
+			}
 			metrics := middleware.Identity
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
@@ -519,7 +537,6 @@ func main() {
 			router.Mount(`/`, func() http.Handler {
 				root := http.Handler(_404)
 				if *flags.BearerToken != `` {
-					features = append(features, `bearer`)
 					root = middleware.Bearer(*flags.BearerToken, false, nil, logger)(root)
 				}
 				root = middleware.Control(root, *flags.CtrlLogger, formatter)
@@ -566,7 +583,7 @@ func main() {
 				features = append(features, `self-sign`)
 			}
 			sort.Strings(features)
-			services = append(services, Service{label: label, features: features, server: &http.Server{
+			services = append(services, Service{label: label, features: features, help: help, server: &http.Server{
 				Addr:         *flags.Ctrl,
 				Handler:      router,
 				TLSConfig:    tlsConfig,
@@ -598,6 +615,9 @@ func main() {
 				scheme = `https`
 			}
 			logger.Info(`%s.up %s://%s/%s`, service.label, scheme, connect, features)
+			for _, format := range service.help {
+				logger.Help(`%s.help %s`, service.label, fmt.Sprintf(format, fmt.Sprintf(`%s://%s/`, scheme, connect)))
+			}
 			var err error
 			if service.server.TLSConfig == nil {
 				err = service.server.ListenAndServe()
@@ -642,14 +662,14 @@ func buildTlsConfig(hostname string, generate bool, certFile string, keyFile str
 		ca := &x509.Certificate{
 			SerialNumber: big.NewInt(1),
 			Subject: pkix.Name{
-				Organization:  []string{`ultra`},
+				Organization: []string{`ultra`},
 				// FIXME: what to use for values here?
 				/*
-				Country:       []string{``},
-				Province:      []string{``},
-				Locality:      []string{``},
-				StreetAddress: []string{``},
-				PostalCode:    []string{``},
+					Country:       []string{``},
+					Province:      []string{``},
+					Locality:      []string{``},
+					StreetAddress: []string{``},
+					PostalCode:    []string{``},
 				*/
 			},
 			NotBefore:             time.Now().UTC(),
@@ -675,15 +695,15 @@ func buildTlsConfig(hostname string, generate bool, certFile string, keyFile str
 		cs := &x509.Certificate{
 			SerialNumber: big.NewInt(1),
 			Subject: pkix.Name{
-				CommonName:    hostname,
+				CommonName: hostname,
 				// FIXME: what to use for values here?
 				/*
-				Organization:  []string{`ultra`},
-				Country:       []string{``},
-				Province:      []string{``},
-				Locality:      []string{``},
-				StreetAddress: []string{``},
-				PostalCode:    []string{``},
+					Organization:  []string{`ultra`},
+					Country:       []string{``},
+					Province:      []string{``},
+					Locality:      []string{``},
+					StreetAddress: []string{``},
+					PostalCode:    []string{``},
 				*/
 			},
 			NotBefore:    time.Now().UTC(),
@@ -736,3 +756,45 @@ func buildTlsConfig(hostname string, generate bool, certFile string, keyFile str
 	}
 	return tlsConfig, nil
 }
+
+const bootAscii = `
+       % @ :%                             8@ 88;
+    tSX    X                           %@8    @
+  S :       8                        X .       8
+ S;         8;                      ::         8S
+@;           @X                    :            S:
+X             ;:                   S               S
+                t8                 8               :@X
+.                .8:               8                 .8;
+.X                 @               t8                  @;
+ XX                  ;8             @8                   8
+  88                  . %            ;S                   S
+   :                    ;;             S8
+     S@                   S@           %S                  S
+      .:X                   %t        88                   @
+        ;8.                  S%:     ;%    :%S
+          8t                   8S   @     ;@  :@         ;.
+                                  @      X8    ;       88%
+          8;  ..                        @8      :  ;t88
+        8 .  %88                       8@       :@S
+      @ .   S.   ;@                   .8
+    :8:           ;8.                  ;S.
+   88     .t        8t                   8@
+  ;:      X           .8                    %
+ %.        S           .8.                  ;S.
+tX         S8            @.                   8;
+@           :%             :X                    S
+              %@            ;8.                  ;X.
+8                %            X                    8t
+tX               ;X:            ;8                   :8
+ X:                8%            :8.                  ::
+  @@                  ;            8:                   X.
+   %;                 8X             t8                  X
+    .8.                8:             :@:                 :
+      SX                                X                 8
+       t                ;                 .S              .
+         @             ;%                  S@             8
+        Xt            :%                    t8           .%
+     8%:.            S@                      S          ;t
+S@ S;              8:.                       :        ;@%
+@8888888888888888S:.                               .:;;`
