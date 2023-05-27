@@ -383,6 +383,7 @@ func main() {
 					return http.Handler(handler.Gehenna)
 				}
 				root := http.Handler(_404)
+				root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
@@ -446,6 +447,7 @@ func main() {
 			formatter := volatile.NewLogFormatter(label, logger)
 			root := func() http.Handler {
 				root := http.Handler(_404)
+				root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
 				if flags.ofsEnabled {
 					features = append(features, `ofs`)
 					root = middleware.NewFs(ofs, logger)(root)
