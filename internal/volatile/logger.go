@@ -119,8 +119,13 @@ var _ middleware.LogEntry = (*LogEntry)(nil)
 
 func (entry LogEntry) Write(code int, written int, header http.Header, elapsed time.Duration, extra any) {
 	req := entry.request
-	entry.logger.Serve(`%-5s %s %d %-7s %-21s %9d %9d %15s %s`,
-		entry.label, middleware.GetReqID(req.Context()), code, req.Method, req.RemoteAddr, req.ContentLength, written, elapsed.String(), req.RequestURI)
+	sig := '.'
+	if req.TLS != nil {
+		sig = '^'
+	}
+	entry.logger.Serve(`%-5s %c %s %d %-7s %-21s %9d %9d %15s %s`,
+		entry.label, sig, middleware.GetReqID(req.Context()),
+		code, req.Method, req.RemoteAddr, req.ContentLength, written, elapsed.String(), req.RequestURI)
 }
 
 func (entry LogEntry) Panic(v any, stack []byte) {
