@@ -72,6 +72,7 @@ type Flags struct {
 	CtrlSelfSign       *bool
 	CtrlTlsCert        *string
 	CtrlTlsKey         *string
+	CtrlVfs            *bool
 	Ez                 *bool
 	FaviconIco         *string
 	Home               *string
@@ -164,6 +165,7 @@ func main() {
 		CtrlSelfSign:       flag.Bool(`ctrl-self-sign`, false, `generate a self-signed tls certificate for the controller`),
 		CtrlTlsCert:        flag.String(`ctrl-tls-cert`, ``, `specifies the location of the tls certificate for the controller`),
 		CtrlTlsKey:         flag.String(`ctrl-tls-key`, ``, `specifies the location of the tls key for the controller`),
+		CtrlVfs:            flag.Bool(`ctrl-vfs`, false, `enable vfs control`),
 		Ez:                 flag.Bool(`ez`, false, `auto loads the index, favicon.ico, and robots.txt from the root`),
 		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Home:               flag.String(`home`, ``, `specifies the root directory for user homes`),
@@ -344,7 +346,7 @@ func main() {
 	}
 
 	// pipes
-	pipes := map[string]volatile.Router{
+	pipes := map[string]control.Router{
 		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger),
 		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger),
 	}
@@ -569,16 +571,30 @@ func main() {
 					router.Mount(`/prometheus`, handler)
 				}
 			})
-			router.Route(`/vfs`, func(router chi.Router) {
-				features = append(features, `vfs`)
-				handler := http.Handler(volatile.VfsHandler(vfs, logger))
-				if *flags.BearerToken != `` {
-					handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
-				}
-				handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
-				handler = metrics(handler)
-				router.Mount(`/`, handler)
-			})
+			if *flags.CtrlPipe {
+				router.Route(`/pipe`, func(router chi.Router) {
+					features = append(features, `pipe`)
+					handler := http.Handler(handler.Pipes(logger, pipes))
+					if *flags.BearerToken != `` {
+						handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
+					}
+					handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
+					handler = metrics(handler)
+					router.Mount(`/`, handler)
+				})
+			}
+			if *flags.CtrlVfs {
+				router.Route(`/vfs`, func(router chi.Router) {
+					features = append(features, `vfs`)
+					handler := http.Handler(volatile.VfsHandler(vfs, logger))
+					if *flags.BearerToken != `` {
+						handler = middleware.Bearer(*flags.BearerToken, false, nil, logger)(handler)
+					}
+					handler = middleware.Control(handler, *flags.CtrlLogger, formatter)
+					handler = metrics(handler)
+					router.Mount(`/`, handler)
+				})
+			}
 			if tlsConfig != nil {
 				features = append(features, `tls`)
 			}

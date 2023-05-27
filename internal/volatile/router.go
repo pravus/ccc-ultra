@@ -20,6 +20,7 @@ type Router struct {
 	logger     control.Logger
 	withLogger bool
 	routes     map[string]Route
+	metrics    func(http.Handler) http.Handler
 }
 
 func NewRouter(label string, logger control.Logger, withLogger bool) Router {
@@ -28,6 +29,8 @@ func NewRouter(label string, logger control.Logger, withLogger bool) Router {
 		logger:     logger,
 		withLogger: withLogger,
 		routes:     make(map[string]Route),
+		// FIXME: this is fucking disgusting
+		metrics: middleware.Prometheus(label),
 	}
 	return router
 }
@@ -37,7 +40,7 @@ func (router Router) AddRoute(prefix string, url *url.URL) {
 		router.logger.Audit(`%s.router.eject %s -> %s`, router.label, prefix, route.url.String())
 	}
 	handler := http.Handler(httputil.NewSingleHostReverseProxy(url))
-	handler = middleware.Prometheus(router.label)(handler)
+	handler = router.metrics(handler)
 	handler = middleware.ReverseProxy(handler, router.withLogger, NewLogFormatter(router.label, router.logger))
 	router.routes[prefix] = Route{
 		url:     url,
@@ -71,4 +74,12 @@ func (router Router) Handler() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func (router Router) Routes() map[string]*url.URL {
+	routes := map[string]*url.URL{}
+	for prefix, route := range router.routes {
+		routes[prefix] = route.url
+	}
+	return routes
 }
