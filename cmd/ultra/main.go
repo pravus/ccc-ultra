@@ -366,57 +366,68 @@ func main() {
 	// services
 	var services Services
 
+	// helpers
+	buildRootHandler := func(label string, proxies []ReverseProxy, withTls bool, selfSign bool) (http.Handler, []string) {
+		features := []string{}
+		formatter := volatile.NewLogFormatter(label, logger)
+		if !withTls && *flags.HttpsOnly {
+			features = append(features, `https-only`)
+			return http.Handler(handler.Gehenna), features
+		}
+		if *flags.Prometheus {
+			features = append(features, `prometheus`)
+		}
+		if withTls {
+			features = append(features, `tls`)
+		}
+		if selfSign {
+			features = append(features, `self-sign`)
+		}
+		root := http.Handler(_404)
+		root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
+		if flags.ofsEnabled {
+			features = append(features, `ofs`)
+			root = middleware.NewFs(ofs, logger)(root)
+		}
+		if *flags.Home != `` {
+			// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
+			features = append(features, `home`)
+			hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
+			root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
+		}
+		{
+			features = append(features, `vfs`)
+			root = middleware.NewFs(vfs, logger)(root)
+		}
+		root = counters[label](root)
+		root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
+		root = pipes[label].Handler()(root)
+		if withTls && *flags.HttpsHsts > time.Duration(0) {
+			features = append(features, `hsts`)
+			root = middleware.Hsts(*flags.HttpsHsts)(root)
+		}
+		if len(proxies) > 0 {
+			features = append(features, `reverse-proxy`)
+			for _, proxy := range proxies {
+				pipes[label].AddRoute(proxy.Mount, proxy.Url)
+			}
+		}
+		sort.Strings(features)
+		router := chi.NewRouter()
+		router.NotFound(_404)
+		router.MethodNotAllowed(_405)
+		router.Mount(`/`, root)
+		return router, features
+	}
+
 	// http
 	{
 		label := `http`
 		if flags.httpEnabled {
-			features := []string{}
-			metrics := counters[label]
-			pipe := pipes[label]
-			if *flags.Prometheus {
-				features = append(features, `prometheus`)
-			}
-			formatter := volatile.NewLogFormatter(label, logger)
-			root := func() http.Handler {
-				if *flags.HttpsOnly {
-					features = append(features, `https-only`)
-					return http.Handler(handler.Gehenna)
-				}
-				root := http.Handler(_404)
-				root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
-				if flags.ofsEnabled {
-					features = append(features, `ofs`)
-					root = middleware.NewFs(ofs, logger)(root)
-				}
-				if *flags.Home != `` {
-					// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
-					features = append(features, `home`)
-					hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-				}
-				{
-					features = append(features, `vfs`)
-					root = middleware.NewFs(vfs, logger)(root)
-				}
-				root = metrics(root)
-				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
-				root = pipe.Handler()(root)
-				return root
-			}()
-			router := chi.NewRouter()
-			router.NotFound(_404)
-			router.MethodNotAllowed(_405)
-			router.Mount(`/`, root)
-			if len(flags.ReverseProxies) > 0 {
-				features = append(features, `reverse-proxy`)
-				for _, proxy := range flags.ReverseProxies {
-					pipe.AddRoute(proxy.Mount, proxy.Url)
-				}
-			}
-			sort.Strings(features)
+			handler, features := buildRootHandler(label, flags.ReverseProxies, false, false)
 			services = append(services, Service{label: label, features: features, server: &http.Server{
 				Addr:         *flags.Http,
-				Handler:      router,
+				Handler:      handler,
 				TLSConfig:    nil,
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
@@ -437,60 +448,10 @@ func main() {
 			if err != nil {
 				logger.Fatal(`%s.tls-config error: %s`, label, err)
 			}
-
-			features := []string{}
-			metrics := counters[label]
-			pipe := pipes[label]
-			if *flags.Prometheus {
-				features = append(features, `prometheus`)
-			}
-			formatter := volatile.NewLogFormatter(label, logger)
-			root := func() http.Handler {
-				root := http.Handler(_404)
-				root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
-				if flags.ofsEnabled {
-					features = append(features, `ofs`)
-					root = middleware.NewFs(ofs, logger)(root)
-				}
-				if *flags.Home != `` {
-					// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
-					features = append(features, `home`)
-					hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-					root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
-				}
-				{
-					features = append(features, `vfs`)
-					root = middleware.NewFs(vfs, logger)(root)
-				}
-				root = metrics(root)
-				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
-				root = pipe.Handler()(root)
-				if *flags.HttpsHsts > time.Duration(0) {
-					features = append(features, `hsts`)
-					root = middleware.Hsts(*flags.HttpsHsts)(root)
-				}
-				return root
-			}()
-			router := chi.NewRouter()
-			router.NotFound(_404)
-			router.MethodNotAllowed(_405)
-			router.Mount(`/`, root)
-			if len(flags.ReverseProxiesTls) > 0 {
-				features = append(features, `reverse-proxy`)
-				for _, proxy := range flags.ReverseProxiesTls {
-					pipe.AddRoute(proxy.Mount, proxy.Url)
-				}
-			}
-			if tlsConfig != nil {
-				features = append(features, `tls`)
-			}
-			if *flags.HttpsSelfSign {
-				features = append(features, `self-sign`)
-			}
-			sort.Strings(features)
+			handler, features := buildRootHandler(label, flags.ReverseProxiesTls, true, *flags.HttpsSelfSign)
 			services = append(services, Service{label: label, features: features, server: &http.Server{
 				Addr:         *flags.Https,
-				Handler:      router,
+				Handler:      handler,
 				TLSConfig:    tlsConfig,
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
