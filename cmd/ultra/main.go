@@ -18,7 +18,6 @@ import (
 	"log"
 	"math/big"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -67,11 +66,12 @@ type Flags struct {
 	Compression        *int
 	Croesus            *bool
 	Ctrl               *string
+	ctrlEnabled        bool
+	CtrlLogger         *bool
+	CtrlPipe           *bool
 	CtrlSelfSign       *bool
 	CtrlTlsCert        *string
 	CtrlTlsKey         *string
-	CtrlLogger         *bool
-	ctrlEnabled        bool
 	Ez                 *bool
 	FaviconIco         *string
 	Home               *string
@@ -160,6 +160,7 @@ func main() {
 		Croesus:            flag.Bool(`croesus`, false, `enable payments`),
 		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the controller`),
 		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable logging for the controller`),
+		CtrlPipe:           flag.Bool(`ctrl-pipe`, false, `enable pipe router control`),
 		CtrlSelfSign:       flag.Bool(`ctrl-self-sign`, false, `generate a self-signed tls certificate for the controller`),
 		CtrlTlsCert:        flag.String(`ctrl-tls-cert`, ``, `specifies the location of the tls certificate for the controller`),
 		CtrlTlsKey:         flag.String(`ctrl-tls-key`, ``, `specifies the location of the tls key for the controller`),
@@ -342,6 +343,12 @@ func main() {
 		_405 = handler.Mammon
 	}
 
+	// pipes
+	pipes := map[string]volatile.Router{
+		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger),
+		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger),
+	}
+
 	// services
 	var services Services
 
@@ -349,6 +356,7 @@ func main() {
 	{
 		label := `http`
 		if flags.httpEnabled {
+			pipe := pipes[label]
 			features := []string{}
 			metrics := middleware.Identity
 			if *flags.Prometheus {
@@ -373,6 +381,7 @@ func main() {
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
+				root = pipe.Handler()(root)
 				root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
 				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
@@ -394,11 +403,7 @@ func main() {
 			if len(flags.ReverseProxies) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxies {
-					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
-					handler = metrics(handler)
-					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
-					router.Mount(proxy.Mount, handler)
-					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
+					pipe.AddRoute(proxy.Mount, proxy.Url)
 				}
 			}
 			sort.Strings(features)
@@ -426,6 +431,7 @@ func main() {
 				logger.Fatal(`%s.tls-config error: %s`, label, err)
 			}
 
+			pipe := pipes[label]
 			features := []string{}
 			metrics := middleware.Identity
 			if *flags.Prometheus {
@@ -446,6 +452,7 @@ func main() {
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
+				root = pipe.Handler()(root)
 				root = middleware.MethodFilter([]string{http.MethodGet}, _405)(root)
 				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
@@ -471,11 +478,7 @@ func main() {
 			if len(flags.ReverseProxiesTls) > 0 {
 				features = append(features, `reverse-proxy`)
 				for _, proxy := range flags.ReverseProxiesTls {
-					handler := http.Handler(httputil.NewSingleHostReverseProxy(proxy.Url))
-					handler = metrics(handler)
-					handler = middleware.ReverseProxy(handler, *flags.ReverseProxyLogger, formatter)
-					router.Mount(proxy.Mount, handler)
-					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
+					pipe.AddRoute(proxy.Mount, proxy.Url)
 				}
 			}
 			if tlsConfig != nil {
