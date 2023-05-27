@@ -391,9 +391,9 @@ func main() {
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
-				root = pipe.Handler()(root)
 				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
+				root = pipe.Handler()(root)
 				return root
 			}()
 			router := chi.NewRouter()
@@ -462,9 +462,9 @@ func main() {
 					features = append(features, `vfs`)
 					root = middleware.NewFs(vfs, logger)(root)
 				}
-				root = pipe.Handler()(root)
 				root = metrics(root)
 				root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
+				root = pipe.Handler()(root)
 				if *flags.HttpsHsts > time.Duration(0) {
 					features = append(features, `hsts`)
 					root = middleware.Hsts(*flags.HttpsHsts)(root)
