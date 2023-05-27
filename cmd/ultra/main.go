@@ -67,6 +67,9 @@ type Flags struct {
 	Compression        *int
 	Croesus            *bool
 	Ctrl               *string
+	CtrlSelfSign       *bool
+	CtrlTlsCert        *string
+	CtrlTlsKey         *string
 	CtrlLogger         *bool
 	ctrlEnabled        bool
 	Ez                 *bool
@@ -154,8 +157,11 @@ func main() {
 		BearerToken:        flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
 		Compression:        flag.Int(`compression`, 5, `specifies the compression level`),
 		Croesus:            flag.Bool(`croesus`, false, `enable payments`),
-		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the ctrl service`),
-		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable ctrl logging`),
+		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the controller`),
+		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable logging for the controller`),
+		CtrlSelfSign:       flag.Bool(`ctrl-self-sign`, false, `generate a self-signed tls certificate for the controller`),
+		CtrlTlsCert:        flag.String(`ctrl-tls-cert`, ``, `specifies the location of the tls certificate for the controller`),
+		CtrlTlsKey:         flag.String(`ctrl-tls-key`, ``, `specifies the location of the tls key for the controller`),
 		Ez:                 flag.Bool(`ez`, false, `auto loads the index, favicon.ico, and robots.txt from the root`),
 		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
 		Home:               flag.String(`home`, ``, `specifies the root directory for user homes`),
@@ -339,9 +345,8 @@ func main() {
 	// http
 	{
 		label := `http`
-		scheme := `http`
-		features := []string{}
 		if flags.httpEnabled {
+			features := []string{}
 			metrics := middleware.Identity
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
@@ -350,6 +355,7 @@ func main() {
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
 			router.NotFound(_404)
+			router.MethodNotAllowed(_405)
 			router.Mount(`/`, func() http.Handler {
 				if *flags.HttpsOnly {
 					features = append(features, `https-only`)
@@ -393,9 +399,10 @@ func main() {
 				}
 			}
 			sort.Strings(features)
-			services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
+			services = append(services, Service{label: label, features: features, server: &http.Server{
 				Addr:         *flags.Http,
 				Handler:      router,
+				TLSConfig:    nil,
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
 				WriteTimeout: *flags.TimeoutWrite,
@@ -410,117 +417,22 @@ func main() {
 	// https
 	{
 		label := `https`
-		scheme := `https`
-		features := []string{`tls`}
 		if flags.httpsEnabled {
+			tlsConfig, err := buildTlsConfig(*flags.Hostname, *flags.HttpsSelfSign, *flags.HttpsTlsCert, *flags.HttpsTlsKey)
+			if err != nil {
+				logger.Fatal(`%s.tls-config error: %s`, label, err)
+			}
+
+			features := []string{}
 			metrics := middleware.Identity
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
 				metrics = middleware.Prometheus(label)
 			}
 			formatter := volatile.NewLogFormatter(label, logger)
-
-			var cert tls.Certificate
-			if *flags.HttpsSelfSign {
-				features = append(features, `self-sign`)
-				ca := &x509.Certificate{
-					SerialNumber: big.NewInt(1),
-					Subject: pkix.Name{
-						Organization:  []string{`ultra`},
-						// FIXME: what to use for values here?
-						/*
-						Country:       []string{``},
-						Province:      []string{``},
-						Locality:      []string{``},
-						StreetAddress: []string{``},
-						PostalCode:    []string{``},
-						*/
-					},
-					NotBefore:             time.Now().UTC(),
-					NotAfter:              time.Now().UTC().AddDate(1, 0, 0),
-					IsCA:                  true,
-					ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-					KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-					BasicConstraintsValid: true,
-				}
-				caKey, err := rsa.GenerateKey(rand.Reader, 2048)
-				if err != nil {
-					logger.Fatal(`https.self-sign.ca generate key: %s`, err)
-				}
-				caKeyPem := &bytes.Buffer{}
-				pem.Encode(caKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(caKey)})
-				caCert, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
-				if err != nil {
-					logger.Fatal(`https.self-sign.ca create certificate: %s`, err)
-				}
-				caCertPem := &bytes.Buffer{}
-				pem.Encode(caCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: caCert})
-
-				cs := &x509.Certificate{
-					SerialNumber: big.NewInt(1),
-					Subject: pkix.Name{
-						CommonName:    *flags.Hostname,
-						// FIXME: what to use for values here?
-						/*
-						Organization:  []string{`ultra`},
-						Country:       []string{``},
-						Province:      []string{``},
-						Locality:      []string{``},
-						StreetAddress: []string{``},
-						PostalCode:    []string{``},
-						*/
-					},
-					NotBefore:    time.Now().UTC(),
-					NotAfter:     time.Now().UTC().AddDate(1, 0, 0),
-					SubjectKeyId: []byte{1, 2, 3, 4, 6},
-					ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-					KeyUsage:     x509.KeyUsageDigitalSignature,
-					DNSNames:     []string{`localhost`, `127.0.0.1`},
-				}
-				csKey, err := rsa.GenerateKey(rand.Reader, 2048)
-				if err != nil {
-					logger.Fatal(`https.self-sign.cs generate key: %s`, err)
-				}
-				csKeyPem := &bytes.Buffer{}
-				pem.Encode(csKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(csKey)})
-				csCert, err := x509.CreateCertificate(rand.Reader, cs, ca, &csKey.PublicKey, caKey)
-				if err != nil {
-					logger.Fatal(`https.self-sign.cs create certificate: %s`, err)
-				}
-				csCertPem := &bytes.Buffer{}
-				pem.Encode(csCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: csCert})
-
-				cert, err = tls.X509KeyPair(csCertPem.Bytes(), csKeyPem.Bytes())
-				if err != nil {
-					logger.Fatal(`https.self-sign.cs create certificate: %s`, err)
-				}
-			} else {
-				cert, err = tls.LoadX509KeyPair(*flags.HttpsTlsCert, *flags.HttpsTlsKey)
-				if err != nil {
-					logger.Fatal(`https.self-sign key pair: error: %s`, err)
-				}
-			}
-			// FIXME: report cert details (expiration, etc)
-
-			tlsConfig := &tls.Config{
-				MinVersion:               tls.VersionTLS12,
-				PreferServerCipherSuites: true,
-				Certificates:             []tls.Certificate{cert},
-				CurvePreferences: []tls.CurveID{
-					tls.CurveP256,
-					tls.X25519,
-				},
-				CipherSuites: []uint16{
-					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-					tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-					tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				},
-			}
 			router := chi.NewRouter()
 			router.NotFound(_404)
+			router.MethodNotAllowed(_405)
 			router.Mount(`/`, func() http.Handler {
 				root := http.Handler(_404)
 				if flags.ofsEnabled {
@@ -563,8 +475,14 @@ func main() {
 					logger.Info(`%s.mount reverse-proxy %s %s`, label, proxy.Mount, proxy.Url)
 				}
 			}
+			if tlsConfig != nil {
+				features = append(features, `tls`)
+			}
+			if *flags.HttpsSelfSign {
+				features = append(features, `self-sign`)
+			}
 			sort.Strings(features)
-			services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
+			services = append(services, Service{label: label, features: features, server: &http.Server{
 				Addr:         *flags.Https,
 				Handler:      router,
 				TLSConfig:    tlsConfig,
@@ -582,9 +500,13 @@ func main() {
 	// ctrl
 	{
 		label := `ctrl`
-		scheme := `http`
-		features := []string{}
 		if flags.ctrlEnabled {
+			tlsConfig, err := buildTlsConfig(*flags.Hostname, *flags.CtrlSelfSign, *flags.CtrlTlsCert, *flags.CtrlTlsKey)
+			if err != nil {
+				logger.Fatal(`%s.tls-config error: %s`, label, err)
+			}
+
+			features := []string{}
 			metrics := middleware.Identity
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
@@ -593,6 +515,7 @@ func main() {
 			formatter := volatile.NewLogFormatter(label, logger)
 			router := chi.NewRouter()
 			router.NotFound(_404)
+			router.MethodNotAllowed(_405)
 			router.Mount(`/`, func() http.Handler {
 				root := http.Handler(_404)
 				if *flags.BearerToken != `` {
@@ -636,10 +559,17 @@ func main() {
 				handler = metrics(handler)
 				router.Mount(`/`, handler)
 			})
+			if tlsConfig != nil {
+				features = append(features, `tls`)
+			}
+			if *flags.CtrlSelfSign {
+				features = append(features, `self-sign`)
+			}
 			sort.Strings(features)
-			services = append(services, Service{label: label, scheme: scheme, features: features, server: &http.Server{
+			services = append(services, Service{label: label, features: features, server: &http.Server{
 				Addr:         *flags.Ctrl,
 				Handler:      router,
+				TLSConfig:    tlsConfig,
 				IdleTimeout:  *flags.TimeoutIdle,
 				ReadTimeout:  *flags.TimeoutRead,
 				WriteTimeout: *flags.TimeoutWrite,
@@ -663,7 +593,11 @@ func main() {
 			if len(service.features) > 0 {
 				features = ` ` + strings.Join(service.features, ` `)
 			}
-			logger.Info(`%s.up %s://%s/%s`, service.label, service.scheme, connect, features)
+			scheme := `http`
+			if service.server.TLSConfig != nil {
+				scheme = `https`
+			}
+			logger.Info(`%s.up %s://%s/%s`, service.label, scheme, connect, features)
 			var err error
 			if service.server.TLSConfig == nil {
 				err = service.server.ListenAndServe()
@@ -699,4 +633,106 @@ func main() {
 		}()
 	}
 	wg.Wait()
+}
+
+func buildTlsConfig(hostname string, generate bool, certFile string, keyFile string) (*tls.Config, error) {
+	var cert tls.Certificate
+	var err error
+	if generate {
+		ca := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject: pkix.Name{
+				Organization:  []string{`ultra`},
+				// FIXME: what to use for values here?
+				/*
+				Country:       []string{``},
+				Province:      []string{``},
+				Locality:      []string{``},
+				StreetAddress: []string{``},
+				PostalCode:    []string{``},
+				*/
+			},
+			NotBefore:             time.Now().UTC(),
+			NotAfter:              time.Now().UTC().AddDate(1, 0, 0),
+			IsCA:                  true,
+			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+			BasicConstraintsValid: true,
+		}
+		caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, err
+		}
+		caKeyPem := &bytes.Buffer{}
+		pem.Encode(caKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(caKey)})
+		caCert, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+		if err != nil {
+			return nil, err
+		}
+		caCertPem := &bytes.Buffer{}
+		pem.Encode(caCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: caCert})
+
+		cs := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject: pkix.Name{
+				CommonName:    hostname,
+				// FIXME: what to use for values here?
+				/*
+				Organization:  []string{`ultra`},
+				Country:       []string{``},
+				Province:      []string{``},
+				Locality:      []string{``},
+				StreetAddress: []string{``},
+				PostalCode:    []string{``},
+				*/
+			},
+			NotBefore:    time.Now().UTC(),
+			NotAfter:     time.Now().UTC().AddDate(1, 0, 0),
+			SubjectKeyId: []byte{1, 2, 3, 4, 6},
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			DNSNames:     []string{`localhost`, `127.0.0.1`},
+		}
+		csKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, err
+		}
+		csKeyPem := &bytes.Buffer{}
+		pem.Encode(csKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(csKey)})
+		csCert, err := x509.CreateCertificate(rand.Reader, cs, ca, &csKey.PublicKey, caKey)
+		if err != nil {
+			return nil, err
+		}
+		csCertPem := &bytes.Buffer{}
+		pem.Encode(csCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: csCert})
+
+		cert, err = tls.X509KeyPair(csCertPem.Bytes(), csKeyPem.Bytes())
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		cert, err = tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// FIXME: report cert details (expiration, etc)
+	tlsConfig := &tls.Config{
+		MinVersion:               tls.VersionTLS12,
+		PreferServerCipherSuites: true,
+		Certificates:             []tls.Certificate{cert},
+		CurvePreferences: []tls.CurveID{
+			tls.CurveP256,
+			tls.X25519,
+		},
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
+	}
+	return tlsConfig, nil
 }
