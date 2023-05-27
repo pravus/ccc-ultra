@@ -656,6 +656,9 @@ func main() {
 }
 
 func buildTlsConfig(hostname string, generate bool, certFile string, keyFile string) (*tls.Config, error) {
+	if !generate && certFile == `` && keyFile == `` {
+		return nil, nil
+	}
 	var cert tls.Certificate
 	var err error
 	if generate {
