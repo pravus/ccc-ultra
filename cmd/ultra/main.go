@@ -15,8 +15,10 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,7 +42,6 @@ import (
 )
 
 // FIXME: add check for ez mode that root is a directory only
-// FIXME: implement CtrlTlsCert && CtrlTlsKey
 // FIXME: need some way to implement timeouts for reverse proxies
 // FIXME: should vfs be optional?
 // FIXME: it should be a wrapped interface
@@ -94,6 +95,8 @@ type Flags struct {
 	Index              *string
 	LogLevel           *string
 	ofsEnabled         bool
+	Pipe               *string
+	PipeToken          *string
 	Prometheus         *bool
 	ReverseProxies     ReverseProxiesFlag
 	ReverseProxiesTls  ReverseProxiesFlag
@@ -105,6 +108,7 @@ type Flags struct {
 	TimeoutWrite       *time.Duration
 	RobotsTxt          *string
 	Root               *string
+	StripPrefix        *string
 }
 
 type ReverseProxy struct {
@@ -185,6 +189,8 @@ func main() {
 		HttpsTlsKey:        flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
 		Index:              flag.String(`index`, `index.html`, `specifies the name of the default index file`),
 		LogLevel:           flag.String(`log-level`, ``, `specifies the logging level`),
+		Pipe:               flag.String(`pipe`, ``, `create a pipe to another server`),
+		PipeToken:          flag.String(`pipe-token`, ``, `specifies the bearer token used when creating a pipe`),
 		Prometheus:         flag.Bool(`prometheus`, false, `enable prometheus`),
 		TimeoutIdle:        flag.Duration(`timeout-idle`, 5*time.Second, `specifies the request idle timeout duration`),
 		TimeoutRead:        flag.Duration(`timeout-read`, 10*time.Second, `specifies the request read timeout duration`),
@@ -194,6 +200,7 @@ func main() {
 		ReverseProxyLogger: flag.Bool(`reverse-proxy-logger`, false, `enables logging for reverse proxies`),
 		RobotsTxt:          flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
 		Root:               flag.String(`root`, `.`, `specifies the root directory`),
+		StripPrefix:        flag.String(`strip-prefix`, ``, `specifies the prefix to strip from incoming requests`),
 	}
 	flag.Var(&flags.ReverseProxies, `reverse-proxy`, `specifies a reverse proxy`)
 	flag.Var(&flags.ReverseProxiesTls, `reverse-proxy-tls`, `specifies a tls reverse proxy`)
@@ -367,22 +374,22 @@ func main() {
 		_405 = handler.Mammon
 	}
 
-	// pipes
-	counters := map[string]func(http.Handler) http.Handler{
+	// metrics
+	metrics := map[string]func(http.Handler) http.Handler{
 		`http`:  middleware.Identity,
 		`https`: middleware.Identity,
 		`ctrl`:  middleware.Identity,
 	}
 	if *flags.Prometheus {
-		for label, _ := range counters {
-			counters[label] = middleware.Prometheus(label)
+		for label, _ := range metrics {
+			metrics[label] = middleware.Prometheus(label)
 		}
 	}
 
 	// pipes
 	pipes := map[string]control.Router{
-		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger, counters[`http`]),
-		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger, counters[`https`]),
+		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger, metrics[`http`]),
+		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger, metrics[`https`]),
 	}
 
 	// services
@@ -410,21 +417,25 @@ func main() {
 		if flags.ofsEnabled {
 			features = append(features, `ofs`)
 			ofs := oe.NewFsDriver(*flags.Root, *flags.Index, wand)
-			root = middleware.NewFs(ofs, logger)(root)
+			root = middleware.NewFs(ofs, *flags.StripPrefix, logger)(root)
 		}
 		if *flags.Home != `` {
 			// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 			features = append(features, `home`)
 			hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
-			root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, logger)(root)
+			root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, *flags.StripPrefix, logger)(root)
 		}
 		{
 			features = append(features, `vfs`)
-			root = middleware.NewFs(vfs, logger)(root)
+			root = middleware.NewFs(vfs, *flags.StripPrefix, logger)(root)
 		}
-		root = counters[label](root)
+		root = metrics[label](root)
 		root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
 		root = pipes[label].Handler()(root)
+		if *flags.StripPrefix != `` {
+			features = append(features, `stripper`)
+			root = middleware.Stripper(logger, *flags.StripPrefix)(root)
+		}
 		if withTls && *flags.HttpsHsts > time.Duration(0) {
 			features = append(features, `hsts`)
 			root = middleware.Hsts(*flags.HttpsHsts)(root)
@@ -511,7 +522,7 @@ func main() {
 					}
 				}
 			}
-			metrics := counters[label]
+			metrics := metrics[label]
 			if *flags.Prometheus {
 				features = append(features, `prometheus`)
 			}
@@ -601,21 +612,23 @@ func main() {
 	for _, service := range services {
 		service := service
 		go func() {
-			connect := service.server.Addr
-			if strings.IndexRune(connect, ':') == 0 {
-				connect = *flags.Hostname + connect
+			scheme := `http`
+			if service.server.TLSConfig != nil {
+				scheme = `https`
+			}
+			address := service.server.Addr
+			if host, port, err := net.SplitHostPort(address); err != nil {
+				logger.Fatal(`%s.address error: %s`, scheme, err)
+			} else if host == `` {
+				address = *flags.Hostname + `:` + port
 			}
 			features := ``
 			if len(service.features) > 0 {
 				features = ` ` + strings.Join(service.features, ` `)
 			}
-			scheme := `http`
-			if service.server.TLSConfig != nil {
-				scheme = `https`
-			}
-			logger.Info(`%s.up %s://%s/%s`, service.label, scheme, connect, features)
+			logger.Info(`%s.up %s://%s/%s`, service.label, scheme, address, features)
 			for _, format := range service.help {
-				logger.Help(`%s.help %s`, service.label, fmt.Sprintf(format, fmt.Sprintf(`%s://%s/`, scheme, connect)))
+				logger.Help(`%s.help %s`, service.label, fmt.Sprintf(format, fmt.Sprintf(`%s://%s/`, scheme, address)))
 			}
 			var err error
 			if service.server.TLSConfig == nil {
@@ -631,11 +644,41 @@ func main() {
 		}()
 	}
 
+	// install remote pipe
+	if *flags.Pipe != `` {
+		scheme := `http`
+		address := *flags.Http
+		if flags.httpsEnabled {
+			scheme = `https`
+			address = *flags.Https
+		}
+		if host, port, err := net.SplitHostPort(address); err != nil {
+			logger.Fatal(`pipe.address error: %s`, scheme, err)
+		} else if host == `` {
+			address = *flags.Hostname + `:` + port
+		}
+		address = scheme + `://` + address
+		if err := installPipe(*flags.Pipe, *flags.PipeToken, address); err != nil {
+			logger.Error(`pipe.install error: %s`, err)
+		} else {
+			logger.Audit(`pipe.installed %s`, address)
+		}
+	}
+
 	// into the beyond
 	<-func(signals chan os.Signal) <-chan os.Signal {
 		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 		return signals
 	}(make(chan os.Signal, 1))
+
+	// remove remote pipe
+	if *flags.Pipe != `` {
+		if err := removePipe(*flags.Pipe, *flags.PipeToken); err != nil {
+			logger.Error(`pipe.remove error: %s`, err)
+		} else {
+			logger.Audit(`pipe.removed`)
+		}
+	}
 
 	// halt
 	wg := sync.WaitGroup{}
@@ -757,6 +800,84 @@ func buildTlsConfig(hostname string, generate bool, certFile string, keyFile str
 		},
 	}
 	return tlsConfig, nil
+}
+
+func parsePipeSpec(spec string) (string, string, string, error) {
+	pair := strings.SplitN(spec, `:`, 2)
+	if len(pair) != 2 {
+		return ``, ``, ``, fmt.Errorf(`invalid pipe specification`)
+	}
+	label, proxy := pair[0], pair[1]
+	pair = strings.SplitN(proxy, `=`, 2)
+	if len(pair) != 2 {
+		return ``, ``, ``, fmt.Errorf(`invalid pipe specification`)
+	}
+	return label, pair[0], pair[1], nil
+}
+
+func installPipe(spec string, token string, local string) error {
+	label, prefix, remote, err := parsePipeSpec(spec)
+	if err != nil {
+		return err
+	}
+	values := url.Values{}
+	values.Set(`label`, label)
+	values.Set(`prefix`, prefix)
+	values.Set(`url`, local)
+	body := strings.NewReader(values.Encode())
+	req, err := http.NewRequest(http.MethodPost, remote, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Add(`content-type`, `application/x-www-form-urlencoded`)
+	if token != `` {
+		req.Header.Add(`authorization`, `bearer `+token)
+	}
+	client := http.Client{
+		Timeout: 15 * time.Second,
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	} else if res.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(&io.LimitedReader{R: res.Body, N: 1024})
+		if err != nil {
+			return fmt.Errorf(`invalid status %d (%s) error: %s`, res.StatusCode, string(body), err)
+		}
+		return fmt.Errorf(`invalid status %d (%s)`, res.StatusCode, string(body))
+	}
+	return nil
+}
+
+func removePipe(spec string, token string) error {
+	label, prefix, remote, err := parsePipeSpec(spec)
+	if err != nil {
+		return err
+	}
+	values := url.Values{}
+	values.Set(`label`, label)
+	values.Set(`prefix`, prefix)
+	req, err := http.NewRequest(http.MethodDelete, remote+`?`+values.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	if token != `` {
+		req.Header.Add(`authorization`, `bearer `+token)
+	}
+	client := http.Client{
+		Timeout: 15 * time.Second,
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	} else if res.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(&io.LimitedReader{R: res.Body, N: 1024})
+		if err != nil {
+			return fmt.Errorf(`invalid status %d (%s) error: %s`, res.StatusCode, string(body), err)
+		}
+		return fmt.Errorf(`invalid status %d (%s)`, res.StatusCode, string(body))
+	}
+	return nil
 }
 
 const bootAscii = `

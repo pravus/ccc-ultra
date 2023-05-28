@@ -123,9 +123,11 @@ func (entry LogEntry) Write(code int, written int, header http.Header, elapsed t
 	if req.TLS != nil {
 		sig = '^'
 	}
-	entry.logger.Serve(`%-5s %c %s %d %-7s %-21s %9d %9d %15s %s`,
+	// FIXME: there are 3 slots left to move the path to the correct column
+	// FIXME: need stripped path here? what is correct through the entire cycle?
+	entry.logger.Serve(`%-5s %c %s %d %-7s %-21s %9d %9d %15s    %s`,
 		entry.label, sig, middleware.GetReqID(req.Context()),
-		code, req.Method, req.RemoteAddr, req.ContentLength, written, elapsed.String(), req.RequestURI)
+		code, req.Method, req.RemoteAddr, req.ContentLength, written, elapsed.String(), req.URL.String())
 }
 
 func (entry LogEntry) Panic(v any, stack []byte) {

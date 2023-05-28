@@ -27,12 +27,10 @@ func Pipes(logger control.Logger, pipes map[string]control.Router) http.HandlerF
 			label := r.FormValue(`label`)
 			prefix := r.FormValue(`prefix`)
 			formUrl := r.FormValue(`url`)
-
 			if label == `` || prefix == `` || formUrl == `` {
 				http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 				return
 			}
-
 			url, err := url.Parse(formUrl)
 			if err != nil {
 				http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
