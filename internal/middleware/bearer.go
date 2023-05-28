@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/base64"
 	"net/http"
 	"strings"
 
@@ -23,7 +24,10 @@ func Bearer(token string, audit bool, fail http.Handler, logger control.Logger) 
 			} else if strings.ToLower(text[0:index]) != `bearer` {
 				logger.Audit(`bearer: invalid authentication type "%s"`, text[0:index])
 				fail.ServeHTTP(w, r)
-			} else if text[index+1:] != token {
+			} else if decoded, err := base64.StdEncoding.DecodeString(text[index+1:]); err != nil {
+				logger.Audit(`bearer: base64 error: %s`, err)
+				fail.ServeHTTP(w, r)
+			} else if string(decoded) != token {
 				logger.Audit(`bearer: authentication failed`)
 				fail.ServeHTTP(w, r)
 			} else {
