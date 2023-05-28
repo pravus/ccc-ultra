@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ import (
 	"ultra/internal/control"
 	"ultra/internal/handler"
 	"ultra/internal/middleware"
+	"ultra/internal/model"
 	"ultra/internal/oe"
 	"ultra/internal/volatile"
 )
@@ -75,6 +77,7 @@ type Flags struct {
 	CtrlVfs            *bool
 	Ez                 *bool
 	FaviconIco         *string
+	FilthyLucre        *bool
 	Home               *string
 	HomeDir            *string
 	HomePrefix         *string
@@ -158,7 +161,7 @@ func main() {
 	flags := Flags{
 		BearerToken:        flag.String(`bearer-token`, ``, `specifies the bearer token for authenticated endpoints`),
 		Compression:        flag.Int(`compression`, 5, `specifies the compression level`),
-		Croesus:            flag.Bool(`croesus`, false, `enable payments`),
+		Croesus:            flag.Bool(`croesus`, false, `load vfs from bindata assets`),
 		Ctrl:               flag.String(`ctrl`, ``, `specifies the bind address for the controller`),
 		CtrlLogger:         flag.Bool(`ctrl-logger`, false, `enable logging for the controller`),
 		CtrlPipe:           flag.Bool(`ctrl-pipe`, false, `enable pipe router control`),
@@ -168,6 +171,7 @@ func main() {
 		CtrlVfs:            flag.Bool(`ctrl-vfs`, false, `enable vfs control`),
 		Ez:                 flag.Bool(`ez`, false, `auto loads the index, favicon.ico, and robots.txt from the root`),
 		FaviconIco:         flag.String(`favicon-ico`, ``, `specifies the file to use for favicon.ico`),
+		FilthyLucre:        flag.Bool(`filthy-lucre`, false, `enable payments`),
 		Home:               flag.String(`home`, ``, `specifies the root directory for user homes`),
 		HomeDir:            flag.String(`home-dir`, `public_html`, `specifies the public directory for user homes`),
 		HomePrefix:         flag.String(`home-prefix`, `@`, `specifies the prefix to use for user homes`),
@@ -221,9 +225,6 @@ func main() {
 	if *flags.LogLevel != `` {
 		logger.SetLevelFromString(*flags.LogLevel)
 	}
-	if *flags.Root == `` {
-		logger.Fatal(`-root must not be empty`)
-	}
 	if *flags.HttpsHsts > time.Duration(0) {
 		*flags.HttpsOnly = true
 	}
@@ -245,9 +246,6 @@ func main() {
 	// FIXME: boot summary
 	logger.Audit(`%s`, bootAscii)
 	logger.Audit(`ultra.boot %s logging.level=%s`, *flags.Hostname, logger.Level().String())
-	if *flags.Croesus {
-		logger.Audit(`¤ rich as croesus`)
-	}
 
 	// wand
 	wand := volatile.Magic()
@@ -255,13 +253,10 @@ func main() {
 	// vfs
 	vfs := volatile.NewFsDriver()
 
-	// ofs
-	ofs := oe.NewFsDriver(*flags.Root, *flags.Index, wand)
-
 	// root
 	if *flags.Root == `.` {
 		flags.ofsEnabled = true
-	} else {
+	} else if *flags.Root != `` {
 		info, err := os.Stat(*flags.Root)
 		if err != nil {
 			logger.Fatal(`ofs.stat error: %s`, err)
@@ -323,7 +318,7 @@ func main() {
 			height := bounds.Max.Y - bounds.Min.Y
 			width := bounds.Max.X - bounds.Min.X
 			logger.Info(`vfs.load favicon.ico %s %d (%dx%d; %s)`, *flags.FaviconIco, len(data), width, height, format)
-			return `image/` + format, nil
+			return http.DetectContentType(data), nil
 		}); err != nil {
 			logger.Fatal(`vfs.load error: %s`, err)
 		}
@@ -331,16 +326,43 @@ func main() {
 	if *flags.RobotsTxt != `` {
 		if err := vfs.Load(`/robots.txt`, *flags.RobotsTxt, func(data []byte) (string, error) {
 			logger.Info(`vfs.load robots.txt %s %d`, *flags.RobotsTxt, len(data))
-			return `text/plain`, nil
+			return http.DetectContentType(data), nil
 		}); err != nil {
 			logger.Fatal(`vfs.load error: %s`, err)
 		}
 	}
 
+	if *flags.Croesus {
+		for _, asset := range AssetNames() {
+			data, err := Asset(asset)
+			if err != nil {
+				logger.Fatal(`croesus.asset error: %s`, err)
+			}
+			_, name := path.Split(asset)
+			mimeType := http.DetectContentType(data)
+			asset = `/` + asset
+			if *flags.Index != `` {
+				if index := strings.LastIndex(asset, *flags.Index); index >= 0 {
+					asset = asset[:index]
+				}
+			}
+			vfs.Put(asset, data, model.FsNode{
+				Name:     name,
+				IsDir:    false,
+				Modified: time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC),
+				MimeType: mimeType,
+				Size:     int64(len(data)),
+			})
+			logger.Info(`vfs.load %s %s %d`, asset, mimeType, len(data))
+		}
+		logger.Audit(`¤ rich as croesus`)
+	}
+
 	// not found
 	_404 := handler.Cocytus
 	_405 := handler.Manus
-	if *flags.Croesus {
+	if *flags.FilthyLucre {
+		logger.Audit(`¤ greed enabled`)
 		_404 = handler.Mammon
 		_405 = handler.Mammon
 	}
@@ -387,6 +409,7 @@ func main() {
 		root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
 		if flags.ofsEnabled {
 			features = append(features, `ofs`)
+			ofs := oe.NewFsDriver(*flags.Root, *flags.Index, wand)
 			root = middleware.NewFs(ofs, logger)(root)
 		}
 		if *flags.Home != `` {
@@ -407,7 +430,6 @@ func main() {
 			root = middleware.Hsts(*flags.HttpsHsts)(root)
 		}
 		if len(proxies) > 0 {
-			features = append(features, `reverse-proxy`)
 			for _, proxy := range proxies {
 				pipes[label].AddRoute(proxy.Mount, proxy.Url)
 			}

@@ -44,18 +44,15 @@ func VfsHandler(vfs FsDriver, logger control.Logger) http.HandlerFunc {
 			if index := strings.LastIndex(name, `/`); index >= 0 {
 				name = name[index:]
 			}
-			entry := FsEntry{
-				node: model.FsNode{
-					Name:     name,
-					IsDir:    false,
-					Modified: time.Now().UTC(),
-					MimeType: http.DetectContentType(data),
-					Size:     int64(len(data)),
-				},
-				data: data,
+			node := model.FsNode{
+				Name:     name,
+				IsDir:    false,
+				Modified: time.Now().UTC(),
+				MimeType: http.DetectContentType(data),
+				Size:     int64(len(data)),
 			}
-			vfs.Put(path, entry)
-			logger.Audit(`vfs.post path=%s size=%d mime-type=%s`, path, entry.node.Size, entry.node.MimeType)
+			vfs.Put(path, data, node)
+			logger.Audit(`vfs.post path=%s size=%d mime-type=%s`, path, node.Size, node.MimeType)
 			w.WriteHeader(http.StatusOK)
 		}
 	})

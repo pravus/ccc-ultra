@@ -71,8 +71,11 @@ func (fs FsDriver) Get(path string) (model.FsNode, error) {
 	}
 }
 
-func (fs FsDriver) Put(path string, entry FsEntry) {
-	fs.root[path] = entry
+func (fs FsDriver) Put(path string, data []byte, node model.FsNode) {
+	fs.root[path] = FsEntry{
+		data: data,
+		node: node,
+	}
 }
 
 func (fs *FsDriver) Rub(path string) {

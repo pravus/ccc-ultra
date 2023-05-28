@@ -10,6 +10,11 @@ COPY go.mod ./
 COPY go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
+COPY www ./www
+
+RUN go install github.com/kevinburke/go-bindata/v4/...@latest \
+ && find /root -name '*go-bindata*' -print \
+ && $HOME/go/bin/go-bindata -o cmd/ultra/croesus.go -prefix www www/...
 
 RUN go test -race ./... \
  && cd cmd/ultra \
