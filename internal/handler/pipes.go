@@ -15,7 +15,7 @@ func Pipes(logger control.Logger, pipes map[string]control.Router) http.HandlerF
 			res := map[string]map[string]string{}
 			for label, router := range pipes {
 				res[label] = map[string]string{}
-				for path, url := range router.Routes() {
+				for path, url := range router.Proxies() {
 					res[label][path] = url.String()
 				}
 			}
@@ -39,7 +39,7 @@ func Pipes(logger control.Logger, pipes map[string]control.Router) http.HandlerF
 			if router, ok := pipes[label]; !ok {
 				http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 			} else {
-				router.AddRoute(prefix, url)
+				router.AddProxy(prefix, url, nil)
 			}
 		case http.MethodDelete:
 			label := r.FormValue(`label`)
@@ -50,7 +50,7 @@ func Pipes(logger control.Logger, pipes map[string]control.Router) http.HandlerF
 			} else if router, ok := pipes[label]; !ok {
 				http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 			} else {
-				router.RubRoute(prefix)
+				router.RubProxy(prefix)
 			}
 		default:
 			Manus.ServeHTTP(w, r)

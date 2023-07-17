@@ -6,8 +6,8 @@ import (
 )
 
 type Router interface {
-	AddRoute(string, *url.URL)
-	RubRoute(string)
+	AddProxy(string, *url.URL, func(http.Handler) http.Handler)
+	RubProxy(string)
+	Proxies() map[string]*url.URL
 	Handler() func(http.Handler) http.Handler
-	Routes() map[string]*url.URL
 }

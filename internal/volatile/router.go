@@ -10,7 +10,7 @@ import (
 	"ultra/internal/middleware"
 )
 
-type Route struct {
+type Proxy struct {
 	url     *url.URL
 	handler http.Handler
 }
@@ -19,7 +19,7 @@ type Router struct {
 	label      string
 	logger     control.Logger
 	withLogger bool
-	routes     map[string]Route
+	proxies    map[string]Proxy
 	metrics    func(http.Handler) http.Handler
 }
 
@@ -28,31 +28,47 @@ func NewRouter(label string, logger control.Logger, withLogger bool, metrics fun
 		label:      label,
 		logger:     logger,
 		withLogger: withLogger,
-		routes:     make(map[string]Route),
+		proxies:    make(map[string]Proxy),
 		metrics:    metrics,
 	}
 	return router
 }
 
-func (router Router) AddRoute(prefix string, url *url.URL) {
-	if route, ok := router.routes[prefix]; ok {
-		router.logger.Audit(`%s.router.eject %s -> %s`, router.label, prefix, route.url.String())
+func (router Router) AddProxy(prefix string, url *url.URL, wrapper func(http.Handler) http.Handler) {
+	if proxy, ok := router.proxies[prefix]; ok {
+		router.logger.Audit(`%s.router.eject %s -> %s`, router.label, prefix, proxy.url.String())
 	}
-	handler := http.Handler(httputil.NewSingleHostReverseProxy(url))
+	proxy := httputil.NewSingleHostReverseProxy(url)
+	proxy.Rewrite = func(r *httputil.ProxyRequest) {
+		r.Out.Header[`X-Forwarded-For`] = r.In.Header[`X-Forwarded-For`]
+		r.SetXForwarded()
+	}
+	handler := http.Handler(proxy)
+	if wrapper != nil {
+		handler = wrapper(handler)
+	}
 	handler = router.metrics(handler)
 	handler = middleware.ReverseProxy(handler, router.withLogger, NewLogFormatter(router.label, router.logger))
-	router.routes[prefix] = Route{
+	router.proxies[prefix] = Proxy{
 		url:     url,
 		handler: handler,
 	}
 	router.logger.Audit(`%s.router.add %s -> %s`, router.label, prefix, url.String())
 }
 
-func (router Router) RubRoute(prefix string) {
-	if route, ok := router.routes[prefix]; ok {
-		delete(router.routes, prefix)
-		router.logger.Audit(`router.rub %s %s -> %s`, router.label, prefix, route.url.String())
+func (router Router) RubProxy(prefix string) {
+	if proxy, ok := router.proxies[prefix]; ok {
+		delete(router.proxies, prefix)
+		router.logger.Audit(`router.rub %s %s -> %s`, router.label, prefix, proxy.url.String())
 	}
+}
+
+func (router Router) Proxies() map[string]*url.URL {
+	proxies := map[string]*url.URL{}
+	for prefix, proxy := range router.proxies {
+		proxies[prefix] = proxy.url
+	}
+	return proxies
 }
 
 func (router Router) Handler() func(http.Handler) http.Handler {
@@ -64,21 +80,13 @@ func (router Router) Handler() func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			for prefix, route := range router.routes {
+			for prefix, proxy := range router.proxies {
 				if strings.HasPrefix(path, prefix) {
-					route.handler.ServeHTTP(w, r)
+					proxy.handler.ServeHTTP(w, r)
 					return
 				}
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func (router Router) Routes() map[string]*url.URL {
-	routes := map[string]*url.URL{}
-	for prefix, route := range router.routes {
-		routes[prefix] = route.url
-	}
-	return routes
 }

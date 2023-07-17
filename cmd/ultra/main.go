@@ -442,7 +442,7 @@ func main() {
 		}
 		if len(proxies) > 0 {
 			for _, proxy := range proxies {
-				pipes[label].AddRoute(proxy.Mount, proxy.Url)
+				pipes[label].AddProxy(proxy.Mount, proxy.Url, nil)
 			}
 		}
 		sort.Strings(features)
