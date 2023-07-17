@@ -38,10 +38,13 @@ func (router Router) AddProxy(prefix string, url *url.URL, wrapper func(http.Han
 	if proxy, ok := router.proxies[prefix]; ok {
 		router.logger.Audit(`%s.router.eject %s -> %s`, router.label, prefix, proxy.url.String())
 	}
-	proxy := httputil.NewSingleHostReverseProxy(url)
-	proxy.Rewrite = func(r *httputil.ProxyRequest) {
-		r.Out.Header[`X-Forwarded-For`] = r.In.Header[`X-Forwarded-For`]
-		r.SetXForwarded()
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(url)
+			r.Out.Host = r.In.Host
+			r.Out.Header[`X-Forwarded-For`] = r.In.Header[`X-Forwarded-For`]
+			r.SetXForwarded()
+		},
 	}
 	handler := http.Handler(proxy)
 	if wrapper != nil {
