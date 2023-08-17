@@ -94,6 +94,7 @@ type Flags struct {
 	HttpsTlsKey        *string
 	Index              *string
 	LogLevel           *string
+	NobotsTxt          *bool
 	ofsEnabled         bool
 	Pipe               *string
 	PipeToken          *string
@@ -101,14 +102,14 @@ type Flags struct {
 	ReverseProxies     ReverseProxiesFlag
 	ReverseProxiesTls  ReverseProxiesFlag
 	ReverseProxyLogger *bool
+	RobotsTxt          *string
+	Root               *string
+	StripPrefix        *string
 	TimeoutIdle        *time.Duration
 	TimeoutRead        *time.Duration
 	TimeoutRequest     *time.Duration
 	TimeoutShutdown    *time.Duration
 	TimeoutWrite       *time.Duration
-	RobotsTxt          *string
-	Root               *string
-	StripPrefix        *string
 }
 
 type ReverseProxy struct {
@@ -189,18 +190,19 @@ func main() {
 		HttpsTlsKey:        flag.String(`https-tls-key`, ``, `specifies the location of the server tls key`),
 		Index:              flag.String(`index`, `index.html`, `specifies the name of the default index file`),
 		LogLevel:           flag.String(`log-level`, ``, `specifies the logging level`),
+		NobotsTxt:          flag.Bool(`nobots-txt`, false, `load vfs with a default deny policy for bots`),
 		Pipe:               flag.String(`pipe`, ``, `create a pipe to another server`),
 		PipeToken:          flag.String(`pipe-token`, ``, `specifies the bearer token used when creating a pipe`),
 		Prometheus:         flag.Bool(`prometheus`, false, `enable prometheus`),
+		ReverseProxyLogger: flag.Bool(`reverse-proxy-logger`, false, `enables logging for reverse proxies`),
+		RobotsTxt:          flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
+		Root:               flag.String(`root`, `.`, `specifies the root directory`),
+		StripPrefix:        flag.String(`strip-prefix`, ``, `specifies the prefix to strip from incoming requests`),
 		TimeoutIdle:        flag.Duration(`timeout-idle`, 5*time.Second, `specifies the request idle timeout duration`),
 		TimeoutRead:        flag.Duration(`timeout-read`, 10*time.Second, `specifies the request read timeout duration`),
 		TimeoutRequest:     flag.Duration(`timeout-request`, 60*time.Second, `specifies the request timeout duration`),
 		TimeoutShutdown:    flag.Duration(`timeout-shutdown`, 5*time.Second, `specifies the shutdown timeout`),
 		TimeoutWrite:       flag.Duration(`timeout-write`, 60*time.Second, `specifies the response write timeout duration`),
-		ReverseProxyLogger: flag.Bool(`reverse-proxy-logger`, false, `enables logging for reverse proxies`),
-		RobotsTxt:          flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
-		Root:               flag.String(`root`, `.`, `specifies the root directory`),
-		StripPrefix:        flag.String(`strip-prefix`, ``, `specifies the prefix to strip from incoming requests`),
 	}
 	flag.Var(&flags.ReverseProxies, `reverse-proxy`, `specifies a reverse proxy`)
 	flag.Var(&flags.ReverseProxiesTls, `reverse-proxy-tls`, `specifies a tls reverse proxy`)
@@ -363,6 +365,19 @@ func main() {
 			logger.Info(`vfs.load %s %s %d`, asset, mimeType, len(data))
 		}
 		logger.Audit(`¤ rich as croesus`)
+	}
+
+	if *flags.NobotsTxt {
+		data := []byte("User-agent: *\r\nDisallow: /robots.txt\r\nDisallow: /\r\n")
+		vfs.Put(`/robots.txt`, data, model.FsNode{
+			Name:     `robots.txt`,
+			IsDir:    false,
+			Modified: time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC),
+			MimeType: `text/plain`,
+			Size:     int64(len(data)),
+		})
+		logger.Info(`vfs.load robots.txt text/plain %d`, len(data))
+		logger.Audit(`¤ no bots`)
 	}
 
 	// not found

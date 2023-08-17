@@ -75,6 +75,19 @@ func (router Router) Proxies() map[string]*url.URL {
 }
 
 func (router Router) Handler() func(http.Handler) http.Handler {
+	canProxy := func(prefix string, path string) bool {
+		if !strings.HasPrefix(path, prefix) {
+			return false
+		}
+		if len(path) == len(prefix) {
+			return true
+		}
+		check := path[len(prefix)]
+		if check == '/' || check == '?' {
+			return true
+		}
+		return false
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path, err := url.PathUnescape(r.URL.String())
@@ -84,7 +97,7 @@ func (router Router) Handler() func(http.Handler) http.Handler {
 				return
 			}
 			for prefix, proxy := range router.proxies {
-				if strings.HasPrefix(path, prefix) {
+				if canProxy(prefix, path) {
 					proxy.handler.ServeHTTP(w, r)
 					return
 				}
@@ -93,3 +106,4 @@ func (router Router) Handler() func(http.Handler) http.Handler {
 		})
 	}
 }
+
