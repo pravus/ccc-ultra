@@ -25,7 +25,6 @@ var Ripper = mummify(func(w http.ResponseWriter, r *http.Request) {
 		address = address[:index]
 	}
 	var body []byte
-	fmt.Printf("@@@ RIPPER: accept: %s\n", r.Header.Get(`accept`))
 	switch r.Header.Get(`accept`) {
 	case `application/json`:
 		var err error
