@@ -41,6 +41,8 @@ import (
 	"ultra/internal/volatile"
 )
 
+// FIXME: ctrl port request tracing
+
 // FIXME: add check for ez mode that root is a directory only
 // FIXME: need some way to implement timeouts for reverse proxies
 // FIXME: should vfs be optional?
@@ -102,6 +104,7 @@ type Flags struct {
 	ReverseProxies     ReverseProxiesFlag
 	ReverseProxiesTls  ReverseProxiesFlag
 	ReverseProxyLogger *bool
+	Rip                *string
 	RobotsTxt          *string
 	Root               *string
 	StripPrefix        *string
@@ -195,6 +198,7 @@ func main() {
 		PipeToken:          flag.String(`pipe-token`, ``, `specifies the bearer token used when creating a pipe`),
 		Prometheus:         flag.Bool(`prometheus`, false, `enable prometheus`),
 		ReverseProxyLogger: flag.Bool(`reverse-proxy-logger`, false, `enables logging for reverse proxies`),
+		Rip:                flag.String(`rip`, ``, `enables the remote-ip endpoint at the given path`),
 		RobotsTxt:          flag.String(`robots-txt`, ``, `specifies the file to use for robots.txt`),
 		Root:               flag.String(`root`, `.`, `specifies the root directory`),
 		StripPrefix:        flag.String(`strip-prefix`, ``, `specifies the prefix to strip from incoming requests`),
@@ -341,6 +345,7 @@ func main() {
 		}
 	}
 
+	// croesus
 	if *flags.Croesus {
 		for _, asset := range AssetNames() {
 			data, err := Asset(asset)
@@ -367,6 +372,15 @@ func main() {
 		logger.Audit(`¤ rich as croesus`)
 	}
 
+	// ripper
+	if *flags.Rip != `` {
+		if (*flags.Rip)[0] != '/' {
+			logger.Fatal(`rip.endpoint error: must start with "/"`)
+		}
+		logger.Audit(`¤ ripper %s`, *flags.Rip)
+	}
+
+	// nobots
 	if *flags.NobotsTxt {
 		data := []byte("User-agent: *\r\nDisallow: /robots.txt\r\nDisallow: /\r\n")
 		vfs.Put(`/robots.txt`, data, model.FsNode{
@@ -402,6 +416,7 @@ func main() {
 	}
 
 	// pipes
+	// FIXME: rename to something like HyperRouter
 	pipes := map[string]control.Router{
 		`http`:  volatile.NewRouter(`http`, logger, *flags.ReverseProxyLogger, metrics[`http`]),
 		`https`: volatile.NewRouter(`https`, logger, *flags.ReverseProxyLogger, metrics[`https`]),
@@ -464,7 +479,13 @@ func main() {
 		router := chi.NewRouter()
 		router.NotFound(_404)
 		router.MethodNotAllowed(_405)
-		router.Mount(`/`, root)
+		router.Route(`/`, func(r chi.Router) {
+			r.Mount(`/`, root)
+			if *flags.Rip != `` {
+				features = append(features, `ripper`)
+				r.Mount(*flags.Rip, handler.Ripper)
+			}
+		})
 		return router, features
 	}
 

@@ -106,4 +106,3 @@ func (router Router) Handler() func(http.Handler) http.Handler {
 		})
 	}
 }
-
