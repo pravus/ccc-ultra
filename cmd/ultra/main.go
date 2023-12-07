@@ -764,15 +764,6 @@ func buildTlsConfig(hostname string, generate bool, certFile string, keyFile str
 		if err != nil {
 			return nil, err
 		}
-		caKeyPem := &bytes.Buffer{}
-		pem.Encode(caKeyPem, &pem.Block{Type: `RSA PRIVATE KEY`, Bytes: x509.MarshalPKCS1PrivateKey(caKey)})
-		caCert, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
-		if err != nil {
-			return nil, err
-		}
-		caCertPem := &bytes.Buffer{}
-		pem.Encode(caCertPem, &pem.Block{Type: `CERTIFICATE`, Bytes: caCert})
-
 		cs := &x509.Certificate{
 			SerialNumber: big.NewInt(1),
 			Subject: pkix.Name{
