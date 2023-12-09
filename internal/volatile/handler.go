@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,15 +45,25 @@ func VfsHandler(vfs FsDriver, logger control.Logger) http.HandlerFunc {
 			if index := strings.LastIndex(name, `/`); index >= 0 {
 				name = name[index:]
 			}
+			modified := time.Now().UTC()
+			if mtime := r.FormValue(`mtime`); mtime != `` {
+				if unix, err := strconv.ParseInt(mtime, 10, 64); err != nil {
+					logger.Error(`vfs.post error: %s`, err)
+					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+					return
+				} else {
+					modified = time.Unix(unix, 0).UTC()
+				}
+			}
 			node := model.FsNode{
 				Name:     name,
 				IsDir:    false,
-				Modified: time.Now().UTC(),
+				Modified: modified,
 				MimeType: http.DetectContentType(data),
 				Size:     int64(len(data)),
 			}
 			vfs.Put(path, data, node)
-			logger.Audit(`vfs.post path=%s size=%d mime-type=%s`, path, node.Size, node.MimeType)
+			logger.Audit(`vfs.post path=%s size=%d mime-type=%s modified=%s`, path, node.Size, node.MimeType, node.Modified.String())
 			w.WriteHeader(http.StatusOK)
 		}
 	})

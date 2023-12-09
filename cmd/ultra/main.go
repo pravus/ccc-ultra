@@ -545,9 +545,11 @@ func main() {
 			help := []string{}
 			features := []string{}
 			{
+				if *flags.BearerToken != `` {
+					features = append(features, `bearer`)
+				}
 				for _, method := range []string{`GET`, `POST -d''`, `DELETE`} {
 					if *flags.BearerToken != `` {
-						features = append(features, `bearer`)
 						if *flags.CtrlSelfSign {
 							help = append(help, fmt.Sprintf(`# curl --insecure -sX%s -H 'authorization: bearer TOKEN' '%%s'`, method))
 						} else {
