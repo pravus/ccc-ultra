@@ -41,6 +41,8 @@ import (
 	"ultra/internal/volatile"
 )
 
+// FIXME: add -stfu to crank logging up to 11
+
 // FIXME: ctrl port request tracing
 
 // FIXME: add check for ez mode that root is a directory only

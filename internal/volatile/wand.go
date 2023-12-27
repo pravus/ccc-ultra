@@ -1,10 +1,15 @@
 package volatile
 
 import (
+	"io"
+	"net/http"
+	"os"
 	"strings"
 
 	"ultra/internal/model"
 )
+
+const defaultMimeType = `text/plain`
 
 var mimeTypes = map[string]string{
 	`7z`:    `application/x-7z-compressed`,
@@ -66,5 +71,14 @@ func (wand FsWand) Zap(name string) string {
 			return mimeType
 		}
 	}
-	return `text/plain`
+	file, err := os.Open(name)
+	if err != nil {
+		return defaultMimeType
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 512))
+	if err != nil {
+		return defaultMimeType
+	}
+	return http.DetectContentType(data)
 }
