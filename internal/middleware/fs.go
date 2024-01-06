@@ -33,7 +33,13 @@ var fsIndex = template.Must(template.New(`node.listing`).Parse(strings.TrimSpace
 func NewFs(driver model.FsDriver, urlPrefix string, logger control.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
+			var withBody bool
+			switch r.Method {
+			case http.MethodGet:
+				withBody = true
+			case http.MethodHead:
+				withBody = false
+			default:
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -58,7 +64,7 @@ func NewFs(driver model.FsDriver, urlPrefix string, logger control.Logger) func(
 				}
 				return
 			}
-			publish(logger, urlPrefix, path, node, next, w, r)
+			publish(logger, urlPrefix, path, node, next, withBody, w, r)
 		})
 	}
 }
@@ -66,7 +72,13 @@ func NewFs(driver model.FsDriver, urlPrefix string, logger control.Logger) func(
 func NewHome(driver model.FsDriver, prefix string, public string, urlPrefix string, logger control.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
+			var withBody bool
+			switch r.Method {
+			case http.MethodGet:
+				withBody = true
+			case http.MethodHead:
+				withBody = false
+			default:
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -100,29 +112,31 @@ func NewHome(driver model.FsDriver, prefix string, public string, urlPrefix stri
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			publish(logger, urlPrefix, `/`+prefix+user+`/`+path, node, next, w, r)
+			publish(logger, urlPrefix, `/`+prefix+user+`/`+path, node, next, withBody, w, r)
 		})
 	}
 }
 
-func publish(logger control.Logger, prefix, path string, node model.FsNode, next http.Handler, w http.ResponseWriter, r *http.Request) {
+func publish(logger control.Logger, prefix, path string, node model.FsNode, next http.Handler, withBody bool, w http.ResponseWriter, r *http.Request) {
 	if len(node.Nodes) > 0 {
 		w.Header().Add(`content-type`, `text/html`)
 		w.WriteHeader(http.StatusOK)
-		if path == `/` {
-			path = path[1:]
-		} else if len(path) > 0 && path[len(path)-1] == '/' {
-			path = path[:len(path)-1]
-		}
-		data := struct {
-			Prefix string
-			Path   string
-			Nodes  []model.FsNode
-		}{Prefix: prefix, Path: path, Nodes: node.Nodes}
-		if err := fsIndex.Execute(w, data); err != nil {
-			logger.Warn(`template error: %s`, err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
+		if withBody {
+			if path == `/` {
+				path = path[1:]
+			} else if len(path) > 0 && path[len(path)-1] == '/' {
+				path = path[:len(path)-1]
+			}
+			data := struct {
+				Prefix string
+				Path   string
+				Nodes  []model.FsNode
+			}{Prefix: prefix, Path: path, Nodes: node.Nodes}
+			if err := fsIndex.Execute(w, data); err != nil {
+				logger.Warn(`template error: %s`, err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
 		}
 	} else if node.Data != nil {
 		// FIXME: what is "correct" and should this be an option?
@@ -133,14 +147,16 @@ func publish(logger control.Logger, prefix, path string, node model.FsNode, next
 		w.Header().Add(`content-disposition`, fmt.Sprintf(`%s; filename="%s"`, disposition, node.Name))
 		w.Header().Add(`last-modified`, node.Modified.Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		count, err := io.CopyN(w, node.Data, node.Size)
-		if err != nil {
-			logger.Warn(`copy: %s`, err)
-		} else if count != node.Size {
-			logger.Warn(`copy: %d written is different than expected amount %d`, count, node.Size)
-		}
-		if err := node.Data.Close(); err != nil {
-			logger.Warn(`close error: %s`, err)
+		if withBody {
+			count, err := io.CopyN(w, node.Data, node.Size)
+			if err != nil {
+				logger.Warn(`copy: %s`, err)
+			} else if count != node.Size {
+				logger.Warn(`copy: %d written is different than expected amount %d`, count, node.Size)
+			}
+			if err := node.Data.Close(); err != nil {
+				logger.Warn(`close error: %s`, err)
+			}
 		}
 	} else {
 		next.ServeHTTP(w, r)
