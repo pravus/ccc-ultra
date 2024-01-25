@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	_path "path"
 	"strings"
 
 	"ultra/internal/control"
@@ -52,6 +53,7 @@ func NewFs(driver model.FsDriver, urlPrefix string, logger control.Logger) func(
 			if index := strings.Index(path, `?`); index >= 0 {
 				path = path[:index]
 			}
+			path = _path.Clean(path)
 			node, err := driver.Get(path)
 			if err != nil {
 				switch err {
@@ -88,6 +90,10 @@ func NewHome(driver model.FsDriver, prefix string, public string, urlPrefix stri
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
+			if index := strings.Index(path, `?`); index >= 0 {
+				path = path[:index]
+			}
+			path = _path.Clean(path)
 			if !strings.HasPrefix(path, `/`+prefix) {
 				next.ServeHTTP(w, r)
 				return
@@ -98,9 +104,6 @@ func NewHome(driver model.FsDriver, prefix string, public string, urlPrefix stri
 			}
 			if index := strings.Index(path, user); index >= 0 {
 				path = path[index+len(user):]
-			}
-			if index := strings.Index(path, `?`); index >= 0 {
-				path = path[:index]
 			}
 			if path != `` && path[0] == '/' {
 				path = path[1:]

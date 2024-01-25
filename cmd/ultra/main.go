@@ -41,6 +41,8 @@ import (
 	"ultra/internal/volatile"
 )
 
+// FIXME: add chuck as a 404 handler (spews random bits of files)
+
 // FIXME: add -stfu to crank logging up to 11
 
 // FIXME: ctrl port request tracing
