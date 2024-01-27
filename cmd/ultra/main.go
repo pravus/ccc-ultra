@@ -117,6 +117,7 @@ type Flags struct {
 	TimeoutRequest     *time.Duration
 	TimeoutShutdown    *time.Duration
 	TimeoutWrite       *time.Duration
+	Trash              *bool
 }
 
 type ReverseProxy struct {
@@ -211,6 +212,7 @@ func main() {
 		TimeoutRequest:     flag.Duration(`timeout-request`, 60*time.Second, `specifies the request timeout duration`),
 		TimeoutShutdown:    flag.Duration(`timeout-shutdown`, 5*time.Second, `specifies the shutdown timeout`),
 		TimeoutWrite:       flag.Duration(`timeout-write`, 60*time.Second, `specifies the response write timeout duration`),
+		Trash:              flag.Bool(`trash`, false, `include dumper middleware for unhandled requests`),
 	}
 	flag.Var(&flags.ReverseProxies, `reverse-proxy`, `specifies a reverse proxy`)
 	flag.Var(&flags.ReverseProxiesTls, `reverse-proxy-tls`, `specifies a tls reverse proxy`)
@@ -448,20 +450,24 @@ func main() {
 		}
 		root := http.Handler(_404)
 		root = middleware.MethodFilter([]string{http.MethodGet}, http.Handler(_405))(root)
+		if *flags.Trash {
+			features = append(features, `trash`)
+			root = middleware.Trash(label, logger)(root)
+		}
 		if flags.ofsEnabled {
 			features = append(features, `ofs`)
 			ofs := oe.NewFsDriver(*flags.Root, *flags.Index, wand)
 			root = middleware.NewFs(ofs, *flags.StripPrefix, logger)(root)
+		}
+		{
+			features = append(features, `vfs`)
+			root = middleware.NewFs(vfs, *flags.StripPrefix, logger)(root)
 		}
 		if *flags.Home != `` {
 			// FIXME: consider redirect if path doesn't end with `/` to force directory mode in browser (relative paths)
 			features = append(features, `home`)
 			hfs := oe.NewFsDriver(*flags.Home, *flags.Index, wand)
 			root = middleware.NewHome(hfs, *flags.HomePrefix, *flags.HomeDir, *flags.StripPrefix, logger)(root)
-		}
-		{
-			features = append(features, `vfs`)
-			root = middleware.NewFs(vfs, *flags.StripPrefix, logger)(root)
 		}
 		root = metrics[label](root)
 		root = middleware.Standard(label, root, formatter, *flags.TimeoutRequest, *flags.Compression)
