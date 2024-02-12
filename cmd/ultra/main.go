@@ -41,6 +41,8 @@ import (
 	"ultra/internal/volatile"
 )
 
+// FIXME: add -ls to have ultra generate a directory listing
+
 // FIXME: add chuck as a 404 handler (spews random bits of files)
 
 // FIXME: add -stfu to crank logging up to 11
@@ -351,6 +353,20 @@ func main() {
 		}
 	}
 
+	// nobots
+	if *flags.NobotsTxt {
+		data := []byte("User-agent: *\r\nDisallow: /robots.txt\r\nDisallow: /\r\n")
+		vfs.Put(`/robots.txt`, data, model.FsNode{
+			Name:     `robots.txt`,
+			IsDir:    false,
+			Modified: time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC),
+			MimeType: `text/plain`,
+			Size:     int64(len(data)),
+		})
+		logger.Info(`vfs.load robots.txt text/plain %d`, len(data))
+		logger.Audit(`¤ no bots`)
+	}
+
 	// croesus
 	if *flags.Croesus {
 		for _, asset := range AssetNames() {
@@ -384,20 +400,6 @@ func main() {
 			logger.Fatal(`rip.endpoint error: must start with "/"`)
 		}
 		logger.Audit(`¤ ripper %s`, *flags.Rip)
-	}
-
-	// nobots
-	if *flags.NobotsTxt {
-		data := []byte("User-agent: *\r\nDisallow: /robots.txt\r\nDisallow: /\r\n")
-		vfs.Put(`/robots.txt`, data, model.FsNode{
-			Name:     `robots.txt`,
-			IsDir:    false,
-			Modified: time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC),
-			MimeType: `text/plain`,
-			Size:     int64(len(data)),
-		})
-		logger.Info(`vfs.load robots.txt text/plain %d`, len(data))
-		logger.Audit(`¤ no bots`)
 	}
 
 	// not found
