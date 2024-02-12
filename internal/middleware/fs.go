@@ -44,14 +44,16 @@ func NewFs(driver model.FsDriver, urlPrefix string, logger control.Logger) func(
 				next.ServeHTTP(w, r)
 				return
 			}
-			path, err := url.PathUnescape(r.URL.String())
+			var err error
+			path := r.URL.String()
+			if index := strings.Index(path, `?`); index >= 0 {
+				path = path[:index]
+			}
+			path, err = url.PathUnescape(path)
 			if err != nil {
 				logger.Warn(`unescape error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
-			}
-			if index := strings.Index(path, `?`); index >= 0 {
-				path = path[:index]
 			}
 			path = _path.Clean(path)
 			node, err := driver.Get(path)
@@ -84,14 +86,16 @@ func NewHome(driver model.FsDriver, prefix string, public string, urlPrefix stri
 				next.ServeHTTP(w, r)
 				return
 			}
-			path, err := url.PathUnescape(r.URL.String())
+			var err error
+			path := r.URL.String()
+			if index := strings.Index(path, `?`); index >= 0 {
+				path = path[:index]
+			}
+			path, err = url.PathUnescape(path)
 			if err != nil {
 				logger.Warn(`unescape error: %s`, err)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
-			}
-			if index := strings.Index(path, `?`); index >= 0 {
-				path = path[:index]
 			}
 			path = _path.Clean(path)
 			if !strings.HasPrefix(path, `/`+prefix) {
